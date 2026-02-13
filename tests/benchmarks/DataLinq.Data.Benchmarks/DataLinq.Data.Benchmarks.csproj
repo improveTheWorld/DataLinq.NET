@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageReference Include="CsvHelper" Version="33.1.0" />
+    <PackageReference Include="Sylvan.Data.Csv" Version="1.4.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DataLinq.Data.Read\DataLinq.Data.Read.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Framework.ObjectMaterializer\DataLinq.Framework.ObjectMaterializer.csproj" />
+    <ProjectReference Include="..\..\UnitTests\DataLinq.Data.Tests\DataLinq.Data.Tests.csproj" />
+  </ItemGroup>
+
+</Project>

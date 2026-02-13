@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Package Identity -->
+    <PackageId>DataLinq.Net</PackageId>
+    <Description>DataLinq.NET — Complete framework for high-performance data streaming and processing. Includes Read/Write (CSV, JSON, YAML), LINQ extensions, Cases pattern, and parallel processing.</Description>
+    
+    <!-- Include all referenced DLLs in the package -->
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <!-- Core dependencies - all DLLs bundled into this package -->
+  <ItemGroup>
+    <!-- Data Layer -->
+    <ProjectReference Include="..\..\src\DataLinq.Data.Read\DataLinq.Data.Read.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Data.Write\DataLinq.Data.Write.csproj" PrivateAssets="all" />
+    
+    <!-- Extension Methods -->
+    <ProjectReference Include="..\..\src\DataLinq.Extensions.EnumerableExtensions\DataLinq.Extensions.EnumerableExtensions.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Extensions.AsyncEnumerableExtensions\DataLinq.Extensions.AsyncEnumerableExtensions.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Extensions.ParallelQueryExtensions\DataLinq.Extensions.ParallelQueryExtensions.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Extensions.ParallelAsyncQueryExtensions\DataLinq.Extensions.ParallelAsyncQueryExtensions.csproj" PrivateAssets="all" />
+    
+    <!-- Framework Infrastructure -->
+    <ProjectReference Include="..\..\src\DataLinq.Framework.ParallelAsyncQuery\DataLinq.Framework.ParallelAsyncQuery.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Framework.Guard\DataLinq.Framework.Guard.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\src\DataLinq.Framework.AsyncEnumerable\DataLinq.Framework.AsyncEnumerable.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Ensure all referenced DLLs are packed into lib folder -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <!-- Direct reference to YamlDotNet for embedding -->
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" GeneratePathProperty="true" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <!-- Include project references (DataLinq DLLs) -->
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths-&gt;WithMetadataValue('ReferenceSourceTarget', 'ProjectReference'))" />
+      <!-- Include YamlDotNet DLL -->
+      <BuildOutputInPackage Include="$(PkgYamlDotNet)\lib\net8.0\YamlDotNet.dll" />
+    </ItemGroup>
+  </Target>
+
+</Project>

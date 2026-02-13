@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Extract version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+    - name: Restore dependencies
+      run: dotnet restore src/DataLinq.Net.sln
+      
+    - name: Build
+      run: dotnet build src/DataLinq.Net.sln --configuration Release --no-restore
+      
+    - name: Run Tests
+      run: dotnet test src/DataLinq.Net.sln --configuration Release --no-build --verbosity normal
+      
+    - name: Pack NuGet Package
+      run: |
+        cd packaging/DataLinq.Net
+        dotnet pack -c Release -o ../../packages
+        
+    - name: Verify Package Size
+      run: |
+        size=$(stat -c%s "packages/DataLinq.NET.*.nupkg")
+        echo "Package size: $size bytes"
+        if [ $size -lt 500000 ] || [ $size -gt 700000 ]; then
+          echo "ERROR: Package size outside expected range"
+          exit 1
+        fi
+        
+    - name: Publish to NuGet
+      run: |
+        dotnet nuget push packages/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json \
+          --skip-duplicate
+          
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: packages/*.nupkg
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

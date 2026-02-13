@@ -1,0 +1,32 @@
+obj/
+bin/
+.vs/
+script*/
+data/file_hashes.json
+
+# Archive
+archive/
+
+# Coverage & test results - generated, never commit
+coverage/
+TestResults/
+**/TestResults/
+**/*.trx
+**/coverage.cobertura.xml
+
+# Benchmark artifacts - generated, never commit
+**/BenchmarkDotNet.Artifacts/
+
+# NuGet packages - built locally
+nupkgs/
+
+# AI agent context - local only
+.agent/
+
+# Secrets - never commit!
+.secrets.md
+../.secrets.md
+
+# Temp docs
+tempDoc/
+kh/

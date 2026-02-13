@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DataLinq.Data.Read\DataLinq.Data.Read.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.EnumerableExtensions\DataLinq.Extensions.EnumerableExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.ParallelAsyncQueryExtensions\DataLinq.Extensions.ParallelAsyncQueryExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Framework.ParallelAsyncQuery\DataLinq.Framework.ParallelAsyncQuery.csproj" />
+  </ItemGroup>
+
+</Project>

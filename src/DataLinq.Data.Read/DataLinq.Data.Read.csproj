@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- PackageId for NuGet -->
+    <PackageId>DataLinq.Data</PackageId>
+    <Description>High-performance data readers and writers for CSV, JSON, YAML, and Text files. Supports both sync (IEnumerable) and async (IAsyncEnumerable) streaming.</Description>
+    
+    <!-- Override LangVersion if needed -->
+    <LangVersion>13</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DataLinq.Extensions.AsyncEnumerableExtensions\DataLinq.Extensions.AsyncEnumerableExtensions.csproj" />
+    <ProjectReference Include="..\DataLinq.Extensions.EnumerableExtensions\DataLinq.Extensions.EnumerableExtensions.csproj" />
+    <ProjectReference Include="..\DataLinq.Extensions.StringExtensions\DataLinq.Extensions.StringExtensions.csproj" />
+    <ProjectReference Include="..\DataLinq.Framework.ObjectMaterializer\DataLinq.Framework.ObjectMaterializer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+</Project>

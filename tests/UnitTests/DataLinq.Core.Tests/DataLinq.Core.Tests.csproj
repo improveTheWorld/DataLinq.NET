@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.AsyncEnumerableExtensions\DataLinq.Extensions.AsyncEnumerableExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.EnumerableExtensions\DataLinq.Extensions.EnumerableExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.ParallelAsyncQueryExtensions\DataLinq.Extensions.ParallelAsyncQueryExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Extensions.ParallelQueryExtensions\DataLinq.Extensions.ParallelQueryExtensions.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Framework.AsyncEnumerable\DataLinq.Framework.AsyncEnumerable.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Data.Read\DataLinq.Data.Read.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Data.Write\DataLinq.Data.Write.csproj" />
+    <ProjectReference Include="..\..\..\src\DataLinq.Framework.ParallelAsyncQuery\DataLinq.Framework.ParallelAsyncQuery.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

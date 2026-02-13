@@ -1,0 +1,111 @@
+using DataLinq.Framework;
+using Xunit;
+
+namespace DataLinq
+{
+    public class NewObjectsParsing_UsingParamConstructor
+    {
+        class Convert
+        {
+            public static Dictionary<string, int> ConvertToFeedDictionary(string[] feedingOrder)
+                            => new(feedingOrder.Select((x, idx) => new KeyValuePair<string, int>(x.Trim(), idx)));
+        }
+
+        class All_Properties : IHasSchema
+        {
+            public int Property { get; set; }
+            public int Property1 { get; set; }
+
+            readonly static string[] _feedingOrder = { "Property", "Property1" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+        class All_Fields : IHasSchema
+        {
+            public int Field;
+            public int Field1;
+
+            readonly static string[] _feedingOrder = { "Field", "Field1" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+
+        class Mix_Field_Property : IHasSchema
+        {
+            public int intField;
+            public string StringProperty { get; set; }
+            public bool FieldBool;
+
+            readonly static string[] _feedingOrder = { "intField", "StringProperty", "FieldBool" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+
+        class All_PropertiesOrdered
+        {
+            [Order] public int Property { get; set; }
+            [Order] public int Property1 { get; set; }
+        }
+
+
+
+
+        class All_FieldsOrdered
+        {
+            [Order] public int Field;
+            [Order] public int Field1;
+        }
+
+
+
+
+        class Mix_Field_PropertyOredered
+        {
+            [Order] public int intField;
+            [Order] public string StringProperty { get; set; }
+            [Order] public bool FieldBool;
+
+
+        }
+
+        class Mix_Field_PropertyWithConstructor
+        {
+            public int IntField { get; private set; }
+            public string StringProperty { get; private set; }
+            public bool FieldBool { get; private set; }
+
+            public Mix_Field_PropertyWithConstructor(bool fieldBool, int intField, string stringProperty)
+            {
+                IntField = intField;
+                StringProperty = stringProperty;
+                FieldBool = fieldBool;
+            }
+        }
+
+        [Fact]
+        void Parse_StringFields_returnsAllFieldsAreFilled()
+        {
+            // Use schema to map constructor parameters correctly
+            // Constructor order: (bool fieldBool, int intField, string stringProperty)
+            string[] schema = { "FieldBool", "IntField", "StringProperty" };
+            object[] values = { true, 2, "yes" };
+
+            Mix_Field_PropertyWithConstructor? parsed = ObjectMaterializer.Create<Mix_Field_PropertyWithConstructor>(schema, values);
+            Mix_Field_PropertyWithConstructor expected = new Mix_Field_PropertyWithConstructor(true, 2, "yes");
+            Assert.Equal(expected.FieldBool, parsed.FieldBool);
+            Assert.Equal(expected.IntField, parsed.IntField);
+            Assert.Equal(expected.StringProperty, parsed.StringProperty);
+        }
+    }
+}
+
+

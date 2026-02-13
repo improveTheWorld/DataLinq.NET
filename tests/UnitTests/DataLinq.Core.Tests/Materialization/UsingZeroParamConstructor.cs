@@ -1,0 +1,146 @@
+using System;
+using System.Collections.Generic;
+using Xunit;
+
+using DataLinq.Extensions;
+using DataLinq.Framework;
+using System.Linq;
+
+namespace DataLinq.Tests
+{
+    public class NewObjectsParsing_UsingZeroParamConstructor
+    {
+        class Convert
+        {
+            public static Dictionary<string, int> ConvertToFeedDictionary(string[] feedingOrder)
+                => new(feedingOrder.Select((x, idx) => new KeyValuePair<string, int>(x.Trim(), idx)));
+
+        }
+        class All_Properties : IHasSchema
+        {
+            public int Property { get; set; }
+            public int Property1 { get; set; }
+
+            readonly static string[] _feedingOrder = { "Property", "Property1" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+        class All_Fields : IHasSchema
+        {
+            public int Field;
+            public int Field1;
+
+            readonly static string[] _feedingOrder = { "Field", "Field1" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+
+        class Mix_Field_Property : IHasSchema
+        {
+            public int intField;
+            public string StringProperty { get; set; }
+            public bool FieldBool;
+
+            readonly static string[] _feedingOrder = { "intField", "StringProperty", "FieldBool" };
+            public Dictionary<string, int> GetDictSchema()
+            {
+                return Convert.ConvertToFeedDictionary(_feedingOrder);
+            }
+        }
+
+
+        class All_PropertiesOrdered
+        {
+            [Order] public int Property { get; set; }
+            [Order] public int Property1 { get; set; }
+        }
+
+
+
+
+        class All_FieldsOrdered
+        {
+            [Order] public int Field;
+            [Order] public int Field1;
+        }
+
+
+
+
+        class Mix_Field_Oredered
+        {
+            [Order] public int intField;
+            [Order] public string StringProperty { get; set; }
+            [Order] public bool FieldBool;
+
+
+        }
+
+        class Mix_Field_PropertyWithConstructor
+        {
+            int IntField;
+            string StringProperty { get; set; }
+            bool FieldBool;
+
+            public Mix_Field_PropertyWithConstructor(bool fieldBool, int intField, string stringProperty)
+            {
+                IntField = intField;
+                StringProperty = stringProperty;
+                FieldBool = fieldBool;
+            }
+
+        }
+
+
+        [Fact]
+        void Parse_IFeedable()
+        {
+            // Use IHasSchema to get the proper schema, then pass values separately
+            string[] schema = { "intField", "StringProperty", "FieldBool" };
+            object[] values = { 2, "yes", true };
+
+            Mix_Field_Property parsed = ObjectMaterializer.Create<Mix_Field_Property>(schema, values);
+            Mix_Field_Property expected = new Mix_Field_Property { FieldBool = true, intField = 2, StringProperty = "yes" };
+            Assert.Equal(expected.FieldBool, parsed.FieldBool);
+            Assert.Equal(expected.intField, parsed.intField);
+            Assert.Equal(expected.StringProperty, parsed.StringProperty);
+        }
+
+        [Fact]
+        void Parse_WithFeedingOrder()
+        {
+            // Use explicit schema with typed values
+            string[] schema = { "StringProperty", "intField", "FieldBool" };
+            object[] values = { "yes", 2, true };
+
+            Mix_Field_Property expected = new Mix_Field_Property { FieldBool = true, intField = 2, StringProperty = "yes" };
+            var parsed = ObjectMaterializer.Create<Mix_Field_Property>(schema, values);
+            Assert.Equal(expected.FieldBool, parsed.FieldBool);
+            Assert.Equal(expected.intField, parsed.intField);
+            Assert.Equal(expected.StringProperty, parsed.StringProperty);
+        }
+
+        [Fact]
+        void Parse_OrderObject()
+        {
+            // Use explicit schema with typed values matching [Order] attribute order
+            string[] schema = { "intField", "StringProperty", "FieldBool" };
+            object[] values = { 2, "yes", true };
+
+            Mix_Field_Oredered expected = new Mix_Field_Oredered { FieldBool = true, intField = 2, StringProperty = "yes" };
+            var parsed = ObjectMaterializer.Create<Mix_Field_Oredered>(schema, values);
+            Assert.Equal(expected.FieldBool, parsed.FieldBool);
+            Assert.Equal(expected.intField, parsed.intField);
+            Assert.Equal(expected.StringProperty, parsed.StringProperty);
+        }
+
+
+
+    }
+}

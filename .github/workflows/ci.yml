@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Restore dependencies
+      run: dotnet restore src/DataLinq.Net.sln
+      
+    - name: Build
+      run: dotnet build src/DataLinq.Net.sln --configuration Release --no-restore
+      
+    - name: Run Unit Tests
+      run: dotnet test src/DataLinq.Net.sln --configuration Release --no-build --verbosity normal --logger trx --results-directory TestResults
+      
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: TestResults
+        retention-days: 30
+
+  package-smoke-test:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Build Package
+      run: |
+        cd packaging/DataLinq.Net
+        dotnet pack -c Release -o ../../packages
+        
+    - name: Verify Package Size
+      run: |
+        size=$(stat -c%s "packages/DataLinq.NET.*.nupkg")
+        echo "Package size: $size bytes"
+        # Package should be ~560KB (500KB - 650KB acceptable)
+        if [ $size -lt 500000 ] || [ $size -gt 700000 ]; then
+          echo "ERROR: Package size $size is outside expected range (500KB-700KB)"
+          exit 1
+        fi
+        echo "Package size is within expected range"
+        
+    - name: Upload Package Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-package
+        path: packages/*.nupkg
+        retention-days: 7
