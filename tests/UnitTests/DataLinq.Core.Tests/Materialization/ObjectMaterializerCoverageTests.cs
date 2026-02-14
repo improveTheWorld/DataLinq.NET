@@ -512,5 +512,131 @@ public class ObjectMaterializerCoverageTests
     }
 
     #endregion
+
+    #region NET-011: Int64 → Enum Conversion Bug Models
+
+    public enum Priority { Low = 0, Medium = 1, High = 2, Critical = 3 }
+
+    /// <summary>Record with enum constructor param — simulates DB query result.</summary>
+    public record TaskItem(int Id, string Title, Priority Priority);
+
+    /// <summary>Record with DayOfWeek enum — another common case.</summary>
+    public record Meeting(int Id, DayOfWeek Day);
+
+    /// <summary>Mutable class with enum property — tests GeneralMaterializationSession path.</summary>
+    public class MutableTaskItem
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = "";
+        public Priority Priority { get; set; }
+    }
+
+    #endregion
+
+    #region NET-011: Int64 → Enum Conversion Tests
+
+    [Fact] // BUG: NET-011 - Int64 to enum conversion fails with InvalidCastException
+    public void Create_WithInt64ForEnum_ShouldConvertCorrectly()
+    {
+        // Arrange — databases (Snowflake, Postgres, etc.) return integers as Int64
+        var schema = new[] { "Id", "Day" };
+        var values = new object[] { 1L, 5L }; // Int64 values, DayOfWeek.Friday = 5
+
+        // Act
+        var result = ObjectMaterializer.Create<Meeting>(schema, values);
+
+        // Assert
+        Assert.Equal(1, result.Id);
+        Assert.Equal(DayOfWeek.Friday, result.Day);
+    }
+
+    [Fact] // BUG: NET-011 - Int64 to enum conversion fails in CtorSession hot path
+    public void CreateCtorSession_WithInt64ForEnum_ShouldConvertCorrectly()
+    {
+        // Arrange — this tests the cached CtorMaterializationSession path
+        var schema = new[] { "Id", "Title", "Priority" };
+        var session = ObjectMaterializer.CreateCtorSession<TaskItem>(schema);
+
+        // Act
+        var result = session.Create(new object[] { 1L, "Fix bug", 2L }); // Priority.High = 2
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(1, result.Id);
+        Assert.Equal("Fix bug", result.Title);
+        Assert.Equal(Priority.High, result.Priority);
+    }
+
+    [Fact] // BUG: NET-011 - Int64 to enum via GeneralMaterializationSession
+    public void CreateGeneralSession_WithInt64ForEnum_ShouldConvertCorrectly()
+    {
+        // Arrange — tests the member-feeding path
+        var schema = new[] { "Id", "Title", "Priority" };
+        var session = ObjectMaterializer.CreateGeneralSession<MutableTaskItem>(schema);
+
+        // Act
+        var result = session.Create(new object[] { 1L, "Fix bug", 2L });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(1, result.Id);
+        Assert.Equal(Priority.High, result.Priority);
+    }
+
+    #endregion
+
+    #region NET-010: Nested Record Reconstruction Bug Models
+
+    /// <summary>Inner key type that simulates a GroupBy key.</summary>
+    public record GroupKey(bool IsActive, string Region);
+
+    /// <summary>Outer result with nested record — simulates GroupBy + Select.</summary>
+    public record GroupResult(GroupKey Key, int Count);
+
+    /// <summary>Two-level nesting — Address inside Person inside Team.</summary>
+    public record SimpleAddress(string City, int Zip);
+    public record PersonWithAddr(string Name, SimpleAddress Address);
+
+    #endregion
+
+    #region NET-010: Nested Record Reconstruction Tests
+
+    [Fact] // BUG: NET-010 - Nested record reconstruction fails from flat schema
+    public void Create_WithNestedRecord_ShouldReconstructFromFlatSchema()
+    {
+        // Arrange — flat schema with columns matching inner record params
+        var schema = new[] { "IsActive", "Region", "Count" };
+        var values = new object[] { true, "US-West", 42 };
+
+        // Act — should construct GroupKey from IsActive+Region, then GroupResult
+        var result = ObjectMaterializer.Create<GroupResult>(schema, values);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.NotNull(result.Key);
+        Assert.True(result.Key.IsActive);
+        Assert.Equal("US-West", result.Key.Region);
+        Assert.Equal(42, result.Count);
+    }
+
+    [Fact] // BUG: NET-010 - Nested record reconstruction via CtorSession
+    public void CreateCtorSession_WithNestedRecord_ShouldReconstructFromFlatSchema()
+    {
+        // Arrange
+        var schema = new[] { "Name", "City", "Zip" };
+        var session = ObjectMaterializer.CreateCtorSession<PersonWithAddr>(schema);
+
+        // Act
+        var result = session.Create(new object[] { "Alice", "Paris", 75001 });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Alice", result.Name);
+        Assert.NotNull(result.Address);
+        Assert.Equal("Paris", result.Address.City);
+        Assert.Equal(75001, result.Address.Zip);
+    }
+
+    #endregion
 }
 

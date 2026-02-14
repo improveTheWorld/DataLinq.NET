@@ -1,4 +1,4 @@
-using DataLinq;
+ï»¿using DataLinq;
 using DataLinq.Framework;
 using System.Text;
 using System.Text.Json;
@@ -388,12 +388,28 @@ catch (Exception ex)
     findings.Add($"WriteJson: {ex.Message}");
 }
 
-// TEST C5: WriteJson with JsonLinesFormat
-// NOTE: The simple path overload WriteJson(path) does NOT accept JsonWriteOptions!
-// Only CancellationToken is supported. This is a documentation discrepancy.
+// TEST C5: WriteJson with JsonLinesFormat (RESOLVED - path overload now accepts JsonWriteOptions)
 Console.WriteLine("\n--- Test C5: JsonLinesFormat (NDJSON) ---");
-Console.WriteLine("  ? SKIPPED: WriteJson path overload doesn't accept JsonWriteOptions (only CancellationToken)");
-findings.Add("WriteJson API: Path overload doesn't accept JsonWriteOptions, only CancellationToken - docs show options");
+try
+{
+    var ndjsonFile = "test_ndjson.json";
+    var ndjsonData = new[] { new { Id = 1, Name = "Alice" }, new { Id = 2, Name = "Bob" } };
+    var jsonOpts = new JsonWriteOptions { JsonLinesFormat = true };
+    await ndjsonData.Async().WriteJson(ndjsonFile, jsonOpts);
+    var ndjsonContent = await File.ReadAllTextAsync(ndjsonFile);
+    var ndjsonLines = ndjsonContent.Trim().Split('\n');
+    Console.WriteLine($"  NDJSON lines: {ndjsonLines.Length}");
+    if (ndjsonLines.Length == 2)
+        Console.WriteLine($"  ? JsonWriteOptions with path overload works correctly");
+    else
+        findings.Add($"WriteJson NDJSON: Expected 2 lines, got {ndjsonLines.Length}");
+    if (File.Exists(ndjsonFile)) File.Delete(ndjsonFile);
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"  WriteJson NDJSON error: {ex.Message}");
+    findings.Add($"WriteJson NDJSON: {ex.Message}");
+}
 
 // TEST C6: Append mode
 Console.WriteLine("\n--- Test C6: Append Mode ---");
@@ -702,7 +718,7 @@ else
     Console.WriteLine($"Found {findings.Count} issues:");
     foreach (var finding in findings)
     {
-        Console.WriteLine($"  • {finding}");
+        Console.WriteLine($"  ï¿½ {finding}");
     }
 }
 

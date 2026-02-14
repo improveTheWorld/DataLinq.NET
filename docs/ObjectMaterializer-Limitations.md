@@ -7,16 +7,21 @@ This document catalogs the known limitations of `DataLinq.Framework.ObjectMateri
 
 ---
 
-## 1. No Automatic Type Conversion in Constructor Path
+## 1. ~~No Automatic Type Conversion in Constructor Path~~ ⚠️ Partially Resolved
 
-**Impact:** High  
+**Impact:** ~~High~~ → Medium (remaining cases only)  
 **Affects:** `CreateViaPrimaryConstructorWithSchema<T>`, `GeneralMaterializationSession<T>`
 
 The compiled constructor delegates use direct `Expression.Convert` casts. When source values arrive as strings (e.g., from YAML, CSV without pre-conversion), the cast fails with `InvalidCastException`.
 
-**Current Workaround:** Callers must pre-convert values to the correct types before calling `ObjectMaterializer.Create<T>()`. For YAML, this is handled in `Read.Yaml.cs` via `ConvertYamlValues<T>()`.
+> **v1.0.1 Fix (NET-011):** Pre-conversion logic added before compiled delegates. Now handles:
+> - **Int64 → Enum** via `Enum.ToObject()` (common from Snowflake/Postgres)
+> - **Cross-numeric** (e.g., Int64 → Int32) via `Convert.ChangeType()`
+> - Applied in all three paths: `CtorMaterializationSession.Create`, `CreateViaPrimaryConstructorWithSchema`, and `ConvertObject` (GeneralSession)
 
-**v2.x Goal:** Integrate `Convert.ChangeType` / type-specific parsing directly into the compiled expression tree, eliminating the need for caller-side conversion.
+**Remaining gap:** String-to-primitive conversion still requires caller-side pre-conversion (e.g., YAML's `ConvertYamlValues<T>()`).
+
+**v2.x Goal:** Full string-to-primitive parsing in the compiled expression tree.
 
 ---
 
@@ -34,28 +39,30 @@ The "primary constructor" is identified by selecting the constructor with the mo
 
 ---
 
-## 3. No Support for Nested Object YAML Deserialization
+## 3. ~~No Support for Nested Object Materialization~~ ⚠️ Partially Resolved
 
-**Impact:** Medium  
-**Affects:** Record path in `Read.Yaml.cs`
+**Impact:** ~~Medium~~ → Low (remaining cases only)  
+**Affects:** Record path in `Read.Yaml.cs`, flat-schema scenarios
 
-When YamlDotNet deserializes to `Dictionary<string, object>`, nested YAML mappings become `Dictionary<object, object>` rather than the target nested type. The current `ObjectMaterializer.Create<T>()` does not recursively materialize nested objects.
+> **v1.0.1 Fix (NET-010):** Recursive nested type construction from flat schema columns. When a constructor parameter doesn't match any schema column but its type has a constructor whose parameters DO match schema columns, the materializer now recursively constructs the nested type.
+>
+> ```csharp
+> // This now works with flat schema:
+> public record GroupKey(bool IsActive, string Region);
+> public record GroupResult(GroupKey Key, int Count);
+>
+> var result = ObjectMaterializer.Create<GroupResult>(
+>     schema: new[] { "IsActive", "Region", "Count" },
+>     values: new object[] { true, "US-West", 42 }
+> );
+> // Key is auto-constructed from flat columns ✅
+> ```
+>
+> Applied in both hot path (`CtorMaterializationSession.BuildNestedFactory`) and cold path (`TryConstructNested`).
 
-```yaml
-# This works:
-- Id: 1
-  Name: Alice
+**Remaining gap:** YAML nested mapping deserialization (`Dictionary<object, object>` → nested type) still requires mutable classes.
 
-# This does NOT work with record types:
-- Id: 1
-  Address:
-    City: Paris
-    Zip: 75001
-```
-
-**Current Workaround:** Use mutable classes (with parameterless constructors) for types containing nested objects — YamlDotNet handles these natively.
-
-**v2.x Goal:** Recursive materialization support in ObjectMaterializer, detecting when a value is a `Dictionary` and materializing it into the corresponding nested type.
+**v2.x Goal:** Dictionary-to-nested-type recursive materialization for YAML/JSON dictionary inputs.
 
 ---
 
@@ -101,11 +108,11 @@ When a constructor parameter is `int?` and the source value is an empty string o
 
 ## Summary Table
 
-| # | Limitation | Impact | Workaround Available |
-|---|-----------|--------|---------------------|
-| 1 | No auto type conversion in ctor path | High | ✅ Caller converts |
+| # | Limitation | Impact | Status |
+|---|-----------|--------|--------|
+| 1 | ~~No auto type conversion in ctor path~~ | ⚠️ Partial | v1.0.1: Int64→Enum + cross-numeric fixed (NET-011) |
 | 2 | Constructor heuristic by param count | Medium | ✅ Works for standard records |
-| 3 | No nested object materialization | Medium | ✅ Use classes for nested types |
+| 3 | ~~No nested object materialization~~ | ⚠️ Partial | v1.0.1: Flat-schema→nested-record fixed (NET-010) |
 | 4 | ~~No fuzzy schema matching~~ | ✅ Resolved | 5-pass fuzzy matching implemented |
 | 5 | Nullable\<T\> handling gaps | Low | ⚠️ Partial |
 | 6 | No async path | Low | ✅ Not needed for most cases |

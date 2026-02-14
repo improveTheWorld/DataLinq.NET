@@ -43,4 +43,4 @@ This is not legally required but helps the project grow!
 
 ## Contact
 
-For licensing questions: tecnet.paris@gmail.com
+For licensing questions: license@get-datalinq.net

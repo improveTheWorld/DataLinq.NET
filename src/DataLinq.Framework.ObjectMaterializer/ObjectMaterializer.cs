@@ -39,6 +39,8 @@ public sealed class CtorMaterializationSession<T>
     private readonly (int valueIndex, Type paramType)[] _paramMap;
     // Buffer for single-threaded reuse to avoid array allocations
     private readonly object?[] _argsBuffer;
+    // NET-010 FIX: Pre-built nested constructors for params with no direct schema match
+    private readonly Func<object?[], object?>?[]? _nestedFactories;
 
     public CtorMaterializationSession(string[] schema, bool resolveSchema = true)
     {
@@ -58,6 +60,23 @@ public sealed class CtorMaterializationSession<T>
 
         // Build param map using shared helper
         _paramMap = ConstructorHelper<T>.BuildParamMap(ctor, schemaDict);
+
+        // NET-010 FIX: Build nested factories for unmapped complex params
+        Func<object?[], object?>?[]? nestedFactories = null;
+        for (int i = 0; i < _paramMap.Length; i++)
+        {
+            if (_paramMap[i].valueIndex == -1)
+            {
+                var paramType = _paramMap[i].paramType;
+                var nestedFactory = BuildNestedFactory(paramType, schemaDict);
+                if (nestedFactory != null)
+                {
+                    nestedFactories ??= new Func<object?[], object?>?[_paramMap.Length];
+                    nestedFactories[i] = nestedFactory;
+                }
+            }
+        }
+        _nestedFactories = nestedFactories;
 
         // Initialize buffer
         _argsBuffer = new object?[_paramMap.Length];
@@ -80,8 +99,40 @@ public sealed class CtorMaterializationSession<T>
         // Use pre-allocated buffer
         for (int i = 0; i < _paramMap.Length; i++)
         {
-            var (idx, _) = _paramMap[i];
-            _argsBuffer[i] = (uint)idx < (uint)values.Length ? values[idx] : null;
+            var (idx, paramType) = _paramMap[i];
+
+            if ((uint)idx < (uint)values.Length)
+            {
+                var raw = values[idx];
+
+                // NET-011 FIX: Pre-convert numeric → enum and cross-numeric types
+                // The compiled delegate uses Expression.Convert (unbox IL) which requires
+                // exact type match. Databases often return Int64 for all integer columns.
+                if (raw != null && paramType.IsValueType)
+                {
+                    var actualType = Nullable.GetUnderlyingType(paramType) ?? paramType;
+                    var rawType = raw.GetType();
+
+                    if (rawType != actualType)
+                    {
+                        if (actualType.IsEnum && raw is IConvertible)
+                            raw = Enum.ToObject(actualType, raw);
+                        else if (rawType.IsPrimitive && actualType.IsPrimitive)
+                            raw = Convert.ChangeType(raw, actualType);
+                    }
+                }
+
+                _argsBuffer[i] = raw;
+            }
+            // NET-010 FIX: Use pre-built nested factory for unmapped complex params
+            else if (_nestedFactories != null && _nestedFactories[i] != null)
+            {
+                _argsBuffer[i] = _nestedFactories[i]!(values);
+            }
+            else
+            {
+                _argsBuffer[i] = null;
+            }
         }
 
         var result = (T)_ctorFactory(_argsBuffer);
@@ -97,6 +148,81 @@ public sealed class CtorMaterializationSession<T>
     /// If 0, this session uses a parameterless constructor.
     /// </summary>
     public int ParamCount => _paramMap.Length;
+
+    /// <summary>
+    /// NET-010: Builds a factory function for a nested complex type that
+    /// constructs the nested object from flat schema values.
+    /// </summary>
+    private static Func<object?[], object?>? BuildNestedFactory(Type nestedType, Dictionary<string, int> schemaDict)
+    {
+        // Only attempt for complex types
+        if (nestedType.IsPrimitive || nestedType == typeof(string) || nestedType == typeof(decimal) ||
+            nestedType == typeof(DateTime) || nestedType == typeof(Guid) || nestedType.IsEnum ||
+            Nullable.GetUnderlyingType(nestedType) != null)
+            return null;
+
+        var ctors = nestedType.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length > 0)
+            .OrderByDescending(c => c.GetParameters().Length)
+            .ToArray();
+
+        foreach (var ctor in ctors)
+        {
+            var ctorParams = ctor.GetParameters();
+            var innerMap = new int[ctorParams.Length]; // maps to schema indices
+            bool allMatched = true;
+
+            for (int j = 0; j < ctorParams.Length; j++)
+            {
+                var pName = ctorParams[j].Name ?? string.Empty;
+                if (schemaDict.TryGetValue(pName, out var idx))
+                {
+                    innerMap[j] = idx;
+                }
+                else
+                {
+                    allMatched = false;
+                    break;
+                }
+            }
+
+            if (allMatched)
+            {
+                // Capture the found constructor and map for the factory closure
+                var capturedCtor = ctor;
+                var capturedMap = innerMap;
+                var capturedParams = ctorParams;
+
+                return (object?[] values) =>
+                {
+                    var args = new object?[capturedParams.Length];
+                    for (int j = 0; j < capturedParams.Length; j++)
+                    {
+                        var raw = (uint)capturedMap[j] < (uint)values.Length ? values[capturedMap[j]] : null;
+
+                        // Apply NET-011 pre-conversion for nested params too
+                        if (raw != null && capturedParams[j].ParameterType.IsValueType)
+                        {
+                            var actualType = Nullable.GetUnderlyingType(capturedParams[j].ParameterType) ?? capturedParams[j].ParameterType;
+                            var rawType = raw.GetType();
+                            if (rawType != actualType)
+                            {
+                                if (actualType.IsEnum && raw is IConvertible)
+                                    raw = Enum.ToObject(actualType, raw);
+                                else if (rawType.IsPrimitive && actualType.IsPrimitive)
+                                    raw = Convert.ChangeType(raw, actualType);
+                            }
+                        }
+
+                        args[j] = raw;
+                    }
+                    return capturedCtor.Invoke(args);
+                };
+            }
+        }
+
+        return null;
+    }
 
     private static ObjectMaterializer.CtorSignatureKey BuildCtorKey(Type type, ConstructorInfo ctor)
     {
@@ -411,7 +537,31 @@ public static class ObjectMaterializer
                 if (schemaDict.TryGetValue(paramName, out var colIndex) &&
                     (uint)colIndex < (uint)values.Length)
                 {
-                    args[i] = values[colIndex];
+                    var raw = values[colIndex];
+
+                    // NET-011 FIX: Pre-convert numeric → enum and cross-numeric types
+                    if (raw != null && param.ParameterType.IsValueType)
+                    {
+                        var actualType = Nullable.GetUnderlyingType(param.ParameterType) ?? param.ParameterType;
+                        var rawType = raw.GetType();
+
+                        if (rawType != actualType)
+                        {
+                            if (actualType.IsEnum && raw is IConvertible)
+                                raw = Enum.ToObject(actualType, raw);
+                            else if (rawType.IsPrimitive && actualType.IsPrimitive)
+                                raw = Convert.ChangeType(raw, actualType);
+                        }
+                    }
+
+                    args[i] = raw;
+                }
+                // NET-010 FIX: Recursive construction for nested record/anonymous types
+                // When a param doesn't match any schema column but its type has constructor params,
+                // try to construct it from flat schema columns (e.g., GroupBy key reconstruction)
+                else if (TryConstructNested(param.ParameterType, schemaDict, values, out var nested))
+                {
+                    args[i] = nested;
                 }
                 else if (param.HasDefaultValue)
                 {
@@ -456,6 +606,93 @@ public static class ObjectMaterializer
             $"  Schema columns: [{string.Join(", ", schema)}]\n" +
             $"  Attempted constructors:\n    " +
             string.Join("\n    ", attemptedCtors));
+    }
+
+
+    /// <summary>
+    /// NET-010 FIX: Tries to recursively construct a nested type from flat schema columns.
+    /// Used when a constructor parameter's type doesn't match any schema column directly,
+    /// but its own constructor parameters might match individual schema columns.
+    /// Example: GroupResult(GroupKey Key, int Count) where Key has ctor(bool IsActive, string Region)
+    /// and the schema is ["IsActive", "Region", "Count"].
+    /// </summary>
+    private static bool TryConstructNested(Type nestedType, Dictionary<string, int> schemaDict, object?[] values, out object? result)
+    {
+        result = null;
+
+        // Only attempt for complex types — skip primitives, strings, enums, etc.
+        if (nestedType.IsPrimitive || nestedType == typeof(string) || nestedType == typeof(decimal) ||
+            nestedType == typeof(DateTime) || nestedType == typeof(Guid) || nestedType.IsEnum ||
+            Nullable.GetUnderlyingType(nestedType) != null)
+            return false;
+
+        // Get constructors with parameters, ordered by specificity (most params first)
+        var ctors = nestedType.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length > 0)
+            .OrderByDescending(c => c.GetParameters().Length)
+            .ToArray();
+
+        foreach (var ctor in ctors)
+        {
+            var ctorParams = ctor.GetParameters();
+            var args = new object?[ctorParams.Length];
+            bool allMatched = true;
+
+            for (int j = 0; j < ctorParams.Length; j++)
+            {
+                var p = ctorParams[j];
+                var pName = p.Name ?? string.Empty;
+
+                if (schemaDict.TryGetValue(pName, out var idx) && (uint)idx < (uint)values.Length)
+                {
+                    var raw = values[idx];
+
+                    // Apply same NET-011 pre-conversion for nested params
+                    if (raw != null && p.ParameterType.IsValueType)
+                    {
+                        var actualType = Nullable.GetUnderlyingType(p.ParameterType) ?? p.ParameterType;
+                        var rawType = raw.GetType();
+                        if (rawType != actualType)
+                        {
+                            if (actualType.IsEnum && raw is IConvertible)
+                                raw = Enum.ToObject(actualType, raw);
+                            else if (rawType.IsPrimitive && actualType.IsPrimitive)
+                                raw = Convert.ChangeType(raw, actualType);
+                        }
+                    }
+
+                    args[j] = raw;
+                }
+                else if (TryConstructNested(p.ParameterType, schemaDict, values, out var innerNested))
+                {
+                    args[j] = innerNested;
+                }
+                else if (p.HasDefaultValue)
+                {
+                    args[j] = p.DefaultValue;
+                }
+                else
+                {
+                    allMatched = false;
+                    break;
+                }
+            }
+
+            if (allMatched)
+            {
+                try
+                {
+                    result = ctor.Invoke(args);
+                    return true;
+                }
+                catch
+                {
+                    // Try next constructor
+                }
+            }
+        }
+
+        return false;
     }
 
 

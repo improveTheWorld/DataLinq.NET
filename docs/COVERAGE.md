@@ -198,7 +198,7 @@ SparkQuery integration tests require a running Spark JVM backend:
 .\scripts\Start-SparkBackend.ps1 -Background
 
 # Then run tests
-dotnet test src/UnitTests/DataLinq.SparkQuery.Tests
+dotnet test tests/UnitTests/DataLinq.SparkQuery.Tests
 ```
 
 ### SnowflakeQuery Test Approach
@@ -221,10 +221,10 @@ We use **Coverlet** - an open-source cross-platform code coverage library for .N
 
 This report is manually maintained. To update:
 
-1. Run tests with coverage: `dotnet test src/UnitTests --collect:"XPlat Code Coverage"`
+1. Run tests with coverage: `dotnet test tests/UnitTests --collect:"XPlat Code Coverage"`
 2. Generate HTML report with `reportgenerator`
 3. Update the coverage percentages in this document based on the report
 
 ---
 
-*Last updated: February 7, 2026 (v1.2.1 — +27 ParallelAsyncQuery cancellation/timeout tests)*
+*Last updated: February 14, 2026 (v1.0.0 — DataLinq.NET rebrand)*

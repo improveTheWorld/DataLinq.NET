@@ -676,8 +676,8 @@ Inspired by:
 
 ## 📞 Support
 
-- **Issues:** [GitHub Issues](https://github.com/yourorg/DataLinq.Core.Materialization/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourorg/DataLinq.Core.Materialization/discussions)
+- **Issues:** [GitHub Issues](https://github.com/improveTheWorld/DataLinq.NET/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/improveTheWorld/DataLinq.NET/discussions)
 - **Documentation:** [Full DataLinq.NET Docs](https://DataLinq.NET/docs)
 
 ---

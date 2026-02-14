@@ -651,9 +651,9 @@ Inspired by:
 
 ## 📞 Support
 
-- **Issues:** [GitHub Issues](https://github.com/yourorg/DataLinq.Core.Materialization/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourorg/DataLinq.Core.Materialization/discussions)
-- **Email:** support@yourorg.com
+- **Issues:** [GitHub Issues](https://github.com/improveTheWorld/DataLinq.NET/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/improveTheWorld/DataLinq.NET/discussions)
+- **Email:** support@get-datalinq.net
 
 ---
 

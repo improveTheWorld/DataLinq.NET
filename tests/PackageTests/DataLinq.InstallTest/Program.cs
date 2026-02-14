@@ -3,7 +3,7 @@ using DataLinq.Parallel;
 using System.Reflection;
 
 Console.WriteLine("=============================================");
-Console.WriteLine("  DataLinq.Net v1.0.1 Runtime Verification");
+Console.WriteLine("  DataLinq.NET v1.0.0 Runtime Verification");
 Console.WriteLine("=============================================\n");
 
 int passed = 0;

@@ -499,6 +499,15 @@ internal sealed class MemberMaterializationPlan<T>
             }
         }
 
+        // NET-011 FIX: Boxed numeric → enum conversion
+        // Databases return integers as Int64 which can't be converted via Convert.ChangeType to enums.
+        // Enum.ToObject handles any IConvertible → enum correctly.
+        if (targetType.IsEnum && value is IConvertible)
+        {
+            try { return Enum.ToObject(targetType, value); }
+            catch { /* fall through to Convert.ChangeType */ }
+        }
+
         // Last resort: Convert.ChangeType for compatible conversions (boxed numerics, etc.)
         try
         {

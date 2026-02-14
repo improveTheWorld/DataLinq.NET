@@ -30,3 +30,6 @@ nupkgs/
 # Temp docs
 tempDoc/
 kh/
+
+# Audit reports - generated, never commit
+**/AUDIT_REPORT*.md
