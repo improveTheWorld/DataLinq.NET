@@ -9,14 +9,16 @@ This document outlines the current capabilities of the `SnowflakeQuery<T>` provi
    - [Grouping & Aggregation](#2-grouping--aggregation)
    - [Joins](#3-joins)
    - [Expression Translation](#4-expression-translation)
-   - [Window Functions](#5-window-functions)
-   - [Set Operations](#6-set-operations)
-   - [Debug & Diagnostics](#7-debug--diagnostics)
-   - [Execution](#8-execution)
-   - [Cases Pattern](#9-cases-pattern-multi-destination-routing)
-2. [Unsupported Features](#unsupported-features-remaining-gaps)
-3. [Summary](#summary)
-4. [See Also](#see-also)
+   - [VARIANT Support](#5-variant-support-semi-structured-data)
+   - [Window Functions](#6-window-functions)
+   - [Set Operations](#7-set-operations)
+   - [Debug & Diagnostics](#8-debug--diagnostics)
+   - [Execution](#9-execution)
+   - [Cases Pattern](#10-cases-pattern-multi-destination-routing)
+   - [Server-Side Functions](#11-server-side-functions-custom-c-method-translation)
+   - [Build-Time Diagnostics](#12-build-time-diagnostics)
+2. [Design Philosophy](#design-philosophy--flat-pipeline-first)
+3. [See Also](#see-also)
 
 ---
 
@@ -33,23 +35,34 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `OrderByDescending` | `ORDER BY ... DESC` | `.OrderByDescending(o => o.Amount)` |
 | `ThenBy` / `Descending` | `, ...` (chained sort) | `.OrderBy(...).ThenBy(o => o.Id)` |
 | `Take(n)` | `LIMIT n` | `.Take(50)` |
-| `Skip(n)` | `OFFSET n` | `.Skip(10)` |
-| `Distinct()` | `SELECT DISTINCT` | `.Select(o => o.Category).Distinct()` |
+| `Skip(n)` | `OFFSET n` | `.Skip(10)` — requires `OrderBy` |
+| `Distinct()` | `SELECT DISTINCT` | `.Select(o => o.Category).Distinct()` — supports `Distinct().Count()` |
+| `SelectMany(selector)` | `LATERAL FLATTEN(...)` | `.SelectMany(o => o.Items)` — flattens VARIANT arrays into rows |
 
 ### 2. Grouping & Aggregation
 | LINQ Method | SQL Translation | Notes |
 |-------------|-----------------|-------|
-| `GroupBy(key)` | `GROUP BY key` | Supports single & composite keys |
+| `GroupBy(key)` | `GROUP BY key` | Single and composite keys (`new { x.A, x.B }`) supported |
 | `.Select(g => g.Count())` | `COUNT(*)` | |
 | `.Select(g => g.Sum(x))` | `SUM(x)` | |
 | `.Select(g => g.Max(x))` | `MAX(x)` | |
 | `.Select(g => g.Min(x))` | `MIN(x)` | |
-| `.Select(g => g.Average(x))` | `AVG(x)` | |
+| `.Select(g => g.Average(x))` | `AVG(x)` | Returns `double` |
+
+**Terminal Aggregates (no GroupBy needed):**
+| LINQ Method | SQL Translation | Notes |
+|-------------|-----------------|-------|
+| `.Sum(o => o.Amount)` | `SELECT SUM(amount)` | Overloads: `decimal`, `double`, `long`, `int` |
+| `.Average(o => o.Amount)` | `SELECT AVG(amount)` | Always returns `double` |
+| `.Min(o => o.Amount)` | `SELECT MIN(amount)` | Generic — works with any comparable type |
+| `.Max(o => o.Amount)` | `SELECT MAX(amount)` | Generic — works with any comparable type |
 
 ### 3. Joins
 | LINQ Method | SQL Translation | Notes |
 |-------------|-----------------|-------|
 | `Join(...)` | `INNER JOIN ... ON ...` | Supports multi-table joins via chaining |
+| `Join(..., joinType: "LEFT")` | `LEFT OUTER JOIN` | Also supports `"RIGHT"`, `"FULL"` |
+| `GroupJoin(...)` | `LEFT JOIN + GROUP BY` | Groups elements from another query by a matching key |
 
 ### 4. Expression Translation
 | C# Expression | SQL Translation |
@@ -78,9 +91,21 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `date.Second` | `SECOND(date)` |
 | `date.DayOfWeek` | `DAYOFWEEK(date)` |
 | `date.DayOfYear` | `DAYOFYEAR(date)` |
-| `obj.Prop.Nested` | `obj:prop:nested` | (VARIANT support) |
+| `obj.Prop.Nested` | `obj:prop:nested` | (VARIANT path access) |
 
-### 5. Window Functions
+### 5. VARIANT Support (Semi-Structured Data)
+
+Mark complex properties with `[Variant]` to map them to Snowflake `VARIANT` columns. Properties are auto-serialized to JSON on write and support Snowflake's native colon syntax on read.
+
+**Array Operations (Higher-Order Functions):**
+| C# Expression | SQL Translation |
+|----------------|-----------------|
+| `o.Items.Any(i => i.Price > 100)` | `ARRAY_SIZE(FILTER(items, i -> i:price > 100)) > 0` |
+| `o.Items.All(i => i.Active)` | `ARRAY_SIZE(FILTER(items, i -> NOT i:active)) = 0` |
+| `o.Items.Where(i => i.Active)` | `FILTER(items, i -> i:active)` |
+| `o.Items.Select(i => i.Price * 2)` | `TRANSFORM(items, i -> i:price * 2)` |
+
+### 6. Window Functions
 | Method | SQL Translation |
 |--------|-----------------|
 | `WithRowNumber(partitionBy, orderBy)` | `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)` |
@@ -89,7 +114,7 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `w.Lead("col", 1)` | `LEAD(col, 1) OVER (...)` |
 | `w.Sum("col")` | `SUM(col) OVER (...)` |
 
-### 6. Set Operations
+### 7. Set Operations
 | Method | SQL Translation |
 |--------|-----------------|
 | `query1.Union(query2)` | `UNION ALL` |
@@ -97,7 +122,7 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `query1.Intersect(query2)` | `INTERSECT` |
 | `query1.Except(query2)` | `EXCEPT` |
 
-### 7. Debug & Diagnostics
+### 8. Debug & Diagnostics
 | Method | Description |
 |--------|-------------|
 | `Show(n)` | Display first N rows to console |
@@ -106,16 +131,16 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `Spy(label)` | Display and continue chaining |
 | `ToSql()` | Get generated SQL string |
 
-### 8. Execution
+### 9. Execution
 - **Async Streaming**: `IAsyncEnumerable<T>` support via `GetAsyncEnumerator` (efficient memory usage).
 - **Materialization**: `ToList()`, `ToArray()`, `First()`, `FirstOrDefault()`, `Count()`, `Any()`.
 - **Single Element**: `Single()`, `SingleOrDefault()` (verify exactly 1 result).
-- **Aggregate pattern**: For filtered aggregates, use `.Where(pred).Count()` rather than `.Count(pred)` — the chained pattern avoids overload ambiguity.
-- **Auto-UDF**: Custom C# methods in `Where()`/`Select()` auto-translate to Snowflake UDF calls — static, instance, lambda, and entity-parameter patterns all supported.
-- **ForEach (Deferred)**: `ForEach(action)` deploys server-side logic to Snowflake. Execution deferred until `Count()`/`ToList()`/`ToArray()`. Static fields auto-synced back after execution.
+- **Predicate overloads**: `Count(pred)`, `Any(pred)`, `First(pred)` — all accept a predicate directly (equivalent to `.Where(pred).Count()` etc.).
+- **Server-Side Functions**: Custom C# methods in `Where()`/`Select()` are automatically deployed and executed on Snowflake — static, instance, lambda, and entity-parameter patterns all supported. No `Pull()` needed.
+- **ForEach (Deferred)**: `ForEach(action)` deploys server-side logic to Snowflake. Execution deferred until `Count()`/`ToList()`/`ToArray()`. Static fields auto-synced back after execution. Supported accumulator types: `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
 - **Pull() (Escape Hatch)**: `Pull()` switches to client-side streaming for edge cases where server-side execution is not desired (e.g., accessing LINQ operators not available on `SnowflakeQuery<T>`).
 
-### 9. Cases Pattern (Multi-Destination Routing)
+### 10. Cases Pattern (Multi-Destination Routing)
 | Method | Description |
 |--------|-------------|
 | `Cases(predicates...)` | Categorize rows by conditions (SQL CASE WHEN) |
@@ -123,66 +148,85 @@ The following operations are translated directly to Snowflake SQL and executed s
 | `WriteTables(tables...)` | Write each category to different table |
 | `MergeTables((table, key)...)` | Merge each category with different match key |
 
----
+### 11. Server-Side Functions (Custom C# Method Translation)
 
-## ⚠️ Unsupported Features (Remaining Gaps)
+When you use a custom C# method inside `.Where()` or `.Select()`, DataLinq automatically deploys it as a **server-side function** on Snowflake. Your method runs directly in the warehouse — no data leaves Snowflake:
 
-These features are **not currently supported**:
+```csharp
+// Static method → deployed as server-side function
+.Where(o => IsHighValue(o.Amount))
+// → WHERE auto_helpers_ishighvalue(amount)
 
-### 1. Complex Relationships & Navigation
-*   ❌ **Navigation Properties**: `o.Customer.Orders` (No `Include()` support like EF Core).
-*   ❌ **Deep Graph Materialization**: Automatically hydrating a full object graph from a flat join.
-*   ✅ **VARIANT Array Operations** (Higher-Order Functions):
-    - `o.Items.Any(i => i.Price > 100)` → `ARRAY_SIZE(FILTER(items, i -> i:price > 100)) > 0`
-    - `o.Items.All(i => i.Active)` → `ARRAY_SIZE(FILTER(items, i -> NOT i:active)) = 0`
-    - `o.Items.Where(i => i.Active)` → `FILTER(items, i -> i:active)`
-    - `o.Items.Select(i => i.Price * 2)` → `TRANSFORM(items, i -> i:price * 2)`
-*   ❌ **Correlated Subqueries**: `.Where(o => otherQuery.Any(x => x.Id == o.Id))` (Requires `EXISTS`).
+// Instance method
+.Where(o => validator.IsValid(o.Amount))
+// → WHERE auto_ordervalidator_isvalid(amount)
 
-### 3. Expression Translation (Advanced)
-*   ✅ **Custom Method Calls (Auto-UDF)**: Static methods, instance methods, lambda/`Func<>` delegates, and entity-parameter methods in `Where()` and `Select()` are auto-translated to UDF function calls.
-    - `.Where(o => IsHighValue(o.Amount))` → `WHERE auto_helpers_ishighvalue(amount)`
-    - `.Where(o => o.IsActive && IsHighValue(o.Amount))` → `WHERE is_active AND auto_helpers_ishighvalue(amount)` — mixed expressions decompose naturally
-    - `.Where(o => CustomValidator(o))` → `WHERE auto_class_customvalidator(amount, status)` — entity parameters auto-decomposed into individual columns
-    - Instance: `.Where(o => validator.IsValid(o.Amount))` → `WHERE auto_ordervalidator_isvalid(amount)`
-    - Lambda: `Func<decimal, bool> f = x => x > 1000;` `.Where(o => f(o.Amount))` → `WHERE auto_lambda_f(amount)`
-    - ⚠️ UDFs prevent Snowflake predicate pushdown — the Roslyn analyzer (DFSN004) warns at build time
-    - ❌ **UDF result alias not queryable after Select**: Projecting a UDF result as a named field in `.Select()` and then referencing that alias in **any subsequent chained operator** (`.Where()`, `.OrderBy()`, `.GroupBy()`, etc.) is **not supported**. SQL cannot reference a column alias defined in the same query level — it requires wrapping in a subquery first.
-      ```csharp
-      // ❌ NOT SUPPORTED — any chaining on the alias produces invalid SQL
-      orders
-          .Select(o => new { IsSmall = IsSmallOrder(o.Amount) })
-          .Where(x => x.IsSmall);       // ERROR: invalid identifier 'IS_SMALL'
-          // .OrderBy(x => x.IsSmall)    // Same error
-          // .GroupBy(x => x.IsSmall)    // Same error
+// Lambda / Func<>
+Func<decimal, bool> f = x => x > 1000;
+.Where(o => f(o.Amount))
+// → WHERE auto_lambda_f(amount)
 
-      // ✅ WORKAROUND — use Pull() to switch to client-side
-      orders
-          .Select(o => new { o.Id, IsSmall = IsSmallOrder(o.Amount) })
-          .Pull()                    // switch to client-side
-          .Where(x => x.IsSmall);   // filtered in memory
-      ```
+// Entity parameter — auto-decomposed into columns
+.Where(o => CustomValidator(o))
+// → WHERE auto_class_customvalidator(amount, status)
+```
 
-### 4. Roslyn Analyzer Diagnostics
+> ⚠️ **Performance & billing impact:** Server-side functions bypass Snowflake's query optimizer (no predicate pushdown). Prefer native operators (`.Where(o => o.Amount > 1000)`) when possible. The Roslyn analyzer (`DFSN004`) warns at build time.
+
+### 12. Build-Time Diagnostics
 | Rule | Severity | Description |
 |------|----------|---------|
 | **DFSN004** | ⚠️ Warning | Custom method in `Where()` — prevents predicate pushdown |
 | **DFSN005** | ⚠️ Warning | Instance method — supported, but carries closure overhead |
-| **DFSN006** | ⚠️ Warning | Multiple UDFs in same `Where` — compounding performance impact |
+| **DFSN006** | ⚠️ Warning | Multiple server-side functions in same `Where` — compounding performance impact |
+| **DFSN007** | ℹ️ Info | Method will execute server-side on Snowflake — not locally in your .NET process |
+| **DFSN008** | ❌ Error | Method uses a construct with no Snowflake equivalent — cannot be deployed |
 
-## Summary
+---
 
-DataLinq.NET's Snowflake provider is a **production-ready Analytical Query Builder**. It excels at:
-*   Filtering and aggregating massive datasets.
-*   Projecting flat results for analysis.
-*   Streaming data efficiently to your application.
-*   **Write operations**: 
-    - `query.WriteTable("TABLE").CreateIfMissing().Overwrite()` — Server-side write
-    - `data.WriteTable(context, "TABLE").CreateIfMissing().Overwrite()` — Client-to-server push
-*   **Full C# support**: Custom methods auto-translate to server-side function calls — no `Pull()` needed.
-*   **95%+** coverage of common analytics scenarios.
+## Design Philosophy — Flat Pipeline First
 
-> **Note:** Snowflake is an analytics data warehouse, not a transactional database. EF Core does not support Snowflake. If your application needs complex entity relationships, change tracking, and migrations, use a traditional OLTP database (SQL Server, PostgreSQL) with Entity Framework Core. For Snowflake analytics workloads, DataLinq.Snowflake is the only LINQ solution available.
+DataLinq deliberately avoids patterns that hide complexity. Every query reads top-to-bottom as a clear pipeline — no nesting, no magic, no hidden SQL. This keeps your analytics code **readable, debuggable, and transparent**.
+
+### Why No Navigation Properties?
+
+EF Core's `Include(c => c.Orders)` silently generates JOINs behind the scenes. In analytics workloads billed by compute time, hidden JOINs are hidden costs. DataLinq makes every join explicit:
+
+```csharp
+// Every relationship is visible — you see exactly what SQL will run
+var result = await customers
+    .Join(orders, c => c.Id, o => o.CustomerId,
+        (c, o) => new { c.Name, o.Product, o.Amount })
+    .ToList();
+```
+
+### Why No Graph Materialization?
+
+Snowflake returns flat rows. Rather than hiding that behind ORM magic, DataLinq gives you the flat data directly. If you need a grouped view, you write it explicitly — the intent is always visible:
+
+```csharp
+// Flat join → client-side grouping when you actually need a tree
+var flat = await customers.Join(orders, ...).ToList();
+var grouped = flat.GroupBy(r => r.Name)
+    .Select(g => new { Customer = g.Key, Orders = g.ToList() });
+```
+
+### Why No Nested Subqueries?
+
+Correlated subqueries (`.Where(o => otherQuery.Any(...))`) nest logic inside logic. This rapidly becomes impossible to debug and hard to understand. DataLinq forces you to write flat, composable pipelines instead:
+
+```csharp
+// Each step is a named variable you can inspect with .ToSql()
+var usCustomers = context.Read.Table<Customer>("CUSTOMERS")
+    .Where(c => c.Region == "US");
+
+var usOrders = await orders
+    .Join(usCustomers, o => o.CustomerId, c => c.Id,
+        (o, c) => new { o.Id, o.Amount, c.Name })
+    .ToList();
+```
+
+> **Result**: Your C# reads like the SQL it generates. When something breaks, you know exactly where to look.
 
 ---
 

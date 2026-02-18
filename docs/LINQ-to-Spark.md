@@ -302,9 +302,8 @@ Console.WriteLine($"Result: {Stats.Count} orders");
 | Rule | Description |
 |------|-------------|
 | Call `.Do()` | ForEach is lazy - nothing happens until you call `.Do()` |
-| Use simple types | Only `int`, `long`, `double`, `float`, `string` are collected back |
+| Use simple types | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, `string` are collected back |
 | Collections don't work | `List<T>`, `Dictionary` etc. are NOT collected |
-| Reset before use | Always reset your counters before calling ForEach |
 | String order varies | If collecting strings, the order may vary |
 
 > [!TIP]
