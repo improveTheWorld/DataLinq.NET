@@ -15,6 +15,9 @@ A **C# LINQ-to-SQL translator** that enables .NET developers to write idiomatic 
 5. [Advanced Features](#advanced-features)
    - [Window Functions](#window-functions-analytics)
    - [Set Operations](#set-operations)
+   - [Streaming](#streaming)
+   - [Server-Side Functions](#server-side-functions)
+   - [ForEach](#foreach--server-side-iteration)
    - [Semi-Structured Data (VARIANT)](#semi-structured-data-variant)
 6. [Write Operations](#write-operations)
    - [Write Patterns](#write-patterns)
@@ -25,8 +28,7 @@ A **C# LINQ-to-SQL translator** that enables .NET developers to write idiomatic 
    - [Transformed Writes](#transformed-writes)
 7. [Database Operations](#database-operations)
 8. [Best Practices](#best-practices)
-9. [Comparison with SparkQuery](#comparison-with-sparkquery)
-10. [See Also](#see-also)
+9. [See Also](#see-also)
 
 ---
 
@@ -106,12 +108,6 @@ await using var context = Snowflake.Connect(
 
 // Read from tables or SQL
 var orders = context.Read.Table<Order>("orders");
-
-// Raw SQL returns IAsyncEnumerable (streaming, not composable)
-await foreach (var order in context.Read.Sql<Order>("SELECT * FROM orders WHERE active = true"))
-{
-    // Process each order
-}
 
 // Build Query
 var query = orders
@@ -273,6 +269,67 @@ var overlap  = q1.Intersect(q2);     // INTERSECT
 var diff     = q1.Except(q2);        // EXCEPT
 ```
 
+### Streaming
+
+Use `.Pull()` to switch from server-side query building to client-side streaming. This gives you an `IAsyncEnumerable<T>` — O(1) memory, row-by-row processing:
+
+```csharp
+await context.Read.Table<Order>("ORDERS")
+    .Where(o => o.Amount > 100)        // Server-side (SQL WHERE)
+    .Take(1000)                        // Server-side (SQL LIMIT)
+    .Pull()                            // Stream results row-by-row
+    .ForEach(o => ProcessLocally(o));  // O(1) memory — only one row loaded at a time
+
+```
+
+> **When to use `Pull()`**: Use `.Pull()` when you need to apply complex C# logic that can't be expressed as SQL nor as a server-side function.
+
+### Server-Side Functions
+
+Custom C# methods in `Where()` and `Select()` are automatically deployed as **server-side functions** on Snowflake — your C# runs directly in the warehouse:
+
+```csharp
+// Static method — auto-translated
+.Where(o => o.IsActive && Helpers.IsHighValue(o.Amount))
+// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
+
+// Entity-parameter method — auto-decomposed
+static bool CustomValidator(Order o) => o.Amount > 1000 && o.Status == "Active";
+.Where(o => CustomValidator(o))
+// SQL: WHERE auto_class_customvalidator(amount, status)
+// Properties accessed inside the method become individual function parameters
+
+// Instance method — also supported
+var validator = new OrderValidator();
+.Where(o => validator.IsValid(o.Amount))
+// SQL: WHERE auto_ordervalidator_isvalid(amount)
+
+// Mixed expressions decompose naturally
+.Where(o => o.IsActive && IsHighValue(o.Amount))
+// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
+// ↑ native SQL                ↑ server-side function auto-generated
+```
+
+> ⚠️ **Performance & billing**: Server-side functions in `Where()` prevent Snowflake predicate pushdown. Prefer native operators when possible. The build-time analyzer (`DFSN004`) warns automatically.
+
+### ForEach — Server-Side Iteration
+
+Deploy server-side logic to Snowflake. Execution is deferred until materialization (`Count()`, `ToList()`, `ToArray()`):
+
+```csharp
+// Static fields are auto-synced back from Snowflake after execution
+static long _count = 0;
+static decimal _total = 0;
+
+var count = await context.Read.Table<Order>("ORDERS")
+    .ForEach(o => { _count++; _total += o.Amount; })  // Deferred — nothing runs yet
+    .Count();                                          // Triggers execution + sync
+
+Console.WriteLine($"Processed {_count} rows, total: {_total}");
+```
+
+**Supported accumulator types:** `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
+
 ### Semi-Structured Data (VARIANT)
 
 Snowflake's native `VARIANT` type stores JSON/semi-structured data. DataLinq supports full read-write lifecycle with native colon syntax (`:`) for performance.
@@ -431,10 +488,10 @@ await records
 // Simple upsert on key
 await records.MergeTable(context, "ORDERS", o => o.OrderId);
 
-// Update specific columns only
+// Update specific columns only (expression-based — type-safe)
 await records
     .MergeTable(context, "CUSTOMERS", c => c.Email)
-    .UpdateOnly("Name", "UpdatedAt");
+    .UpdateOnly(c => c.Name, c => c.UpdatedAt);
 ```
 
 ### Write Options
@@ -547,98 +604,30 @@ int dropped = context
 
 2.  **Parameterization**: All query values are automatically parameterized using `SnowflakeDbParameter`. This prevents SQL injection attacks — you can safely use user input in LINQ expressions.
 
-3.  **Streaming**: For large datasets, prefer `await foreach` (streaming) over `ToList()` (buffering).
+3.  **Column Naming — Write C#, Forget SQL Naming**:
+
+    DataLinq automatically maps C# PascalCase property names to Snowflake snake_case column names. Just write idiomatic C# — the translation is transparent:
+
     ```csharp
-    await foreach (var item in query) { ... } // Memory efficient
+    public class Order
+    {
+        public int OrderId { get; set; }        // → column "order_id"
+        public string CustomerName { get; set; } // → column "customer_name"
+        public DateTime OrderDate { get; set; }  // → column "order_date"
+    }
+
+    // These just work — no attributes, no configuration:
+    orders.Where(o => o.CustomerName == "Alice")   // WHERE customer_name = :p0
+    orders.OrderBy(o => o.OrderDate)                // ORDER BY order_date
+    orders.Select(o => new { o.OrderId, o.CustomerName })  // SELECT order_id, customer_name
     ```
+
+    When reading results back, column names are automatically converted back to PascalCase for object hydration. Small naming mismatches (≤2 characters) are tolerated via fuzzy matching.
 
 4.  **Debugging**: Use `.Spy()` or `.Show()` to inspect intermediate results during development.
     ```csharp
     query.Where(...).Spy("AfterFilter").OrderBy(...)
     ```
-
-5.  **Server-Side Functions — Custom Methods in Where/Select**:
-
-     Custom methods (static, instance, lambda, or entity-parameter) in `Where()` and `Select()` are automatically deployed as **server-side functions** on Snowflake — your C# runs directly in the warehouse, no `Pull()` needed:
-     ```csharp
-     // Static method — auto-translated
-     .Where(o => o.IsActive && Helpers.IsHighValue(o.Amount))
-     // SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
-
-     // Entity-parameter method — auto-decomposed
-     static bool CustomValidator(Order o) => o.Amount > 1000 && o.Status == "Active";
-     .Where(o => CustomValidator(o))
-     // SQL: WHERE auto_class_customvalidator(amount, status)
-     // Properties accessed inside the method become individual function parameters
-
-     // Instance method — also supported
-     var validator = new OrderValidator();
-     .Where(o => validator.IsValid(o.Amount))
-     // SQL: WHERE auto_ordervalidator_isvalid(amount)
-
-     // Lambda / Func<> — also supported
-     Func<decimal, bool> isPremium = x => x > 2000;
-     .Where(o => isPremium(o.Amount))
-     // SQL: WHERE auto_lambda_ispremium(amount)
-
-     // Mixed expressions decompose naturally
-     .Where(o => o.IsActive && IsHighValue(o.Amount))
-     // SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
-     // ↑ SQL part ↑ translated natively    ↑ server-side function auto-generated
-     ```
-     > ⚠️ **Performance & billing**: Server-side functions in `Where()` prevent Snowflake predicate pushdown. Prefer native operators when possible. The build-time analyzer (DFSN004) warns automatically.
-
-6.  **Pull() — Escape Hatch (Rarely Needed)**:
-
-    Since custom methods now auto-translate to server-side functions, `Pull()` is only needed for edge cases like accessing LINQ operators not on `SnowflakeQuery<T>`:
-    ```csharp
-    await foreach (var order in context.Read.Table<Order>("ORDERS")
-        .Where(o => o.Amount > 100)     // ✅ Server-side (SQL WHERE)
-        .Take(1000)                     // ✅ Server-side (SQL LIMIT)
-        .Pull())                        // ← Switch to local (rarely needed)
-    {
-        // Streaming row-by-row, not buffered
-        ProcessLocally(order);
-    }
-    ```
-
-7.  **ForEach — Server-Side and Client-Side**:
-
-     **Server-Side (Deferred):** Use `ForEach()` to deploy server-side logic to Snowflake. Execution is deferred until materialization (`Count()`, `ToList()`, `ToArray()`):
-     ```csharp
-     // Static fields are auto-synced back from Snowflake after execution
-     static long _count = 0;
-     static double _total = 0.0;
-     static void Accumulate(long id, double amount) { _count++; _total += amount; }
-
-     var count = await context.Read.Table<Order>("ORDERS")
-         .ForEach((Action<long, double>)Accumulate)   // Deferred — nothing runs yet
-         .Count();                                     // Triggers execution + sync
-
-     Console.WriteLine($"Processed {_count} rows, total: {_total}");
-    ```
-
-    **Supported accumulator types:** `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
-
-    **Client-Side (Pull):** For complex C# logic, use `Pull()` to switch to client-side streaming:
-    ```csharp
-    await query.Pull().ForEach(x => Log(x)).Do();
-    ```
-
----
-
-## Comparison with SparkQuery
-
-| Feature | SnowflakeQuery | SparkQuery |
-|---------|---------------|------------|
-| **Execution Engine** | Snowflake SQL | Apache Spark (JVM) |
-| **Window Functions** | ✅ Supported | ✅ Supported |
-| **Set Operations** | ✅ Supported | ✅ Supported |
-| **Nested Data** | ✅ `VARIANT` (`:`) | ✅ Struct (`.`) |
-| **Caching** | ⚡ Automatic | ✅ Manual (`.Cache()`) |
-| **Distribution** | ⚡ Automatic | ✅ Manual (`.Repartition()`) |
-
-Both providers share ~95% API surface area, allowing you to reuse your LINQ skills across both Big Data platforms.
 
 ---
 
