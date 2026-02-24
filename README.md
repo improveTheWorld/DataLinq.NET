@@ -56,8 +56,9 @@ dotnet add package DataLinq.NET --version 1.0.0
 **DataLinq.NET was built to stop this cycle:**
 
 - ✅ **Unified API** — Same code for CSV, JSON, Kafka, Spark
-- ✅ **Constant memory** — Stream billions of rows without `OutOfMemoryException` ([see benchmarks](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Benchmarks.md))
-- ✅ **No spaghetti** — Declarative `Cases` pattern replaces nested `if/else`
+- ✅ **Constant memory** — Stream billions of rows without `OutOfMemoryException`
+- ✅ **Zero-friction EF Core integration** — Stream millions of database rows natively without changing your `DbContext`.
+- ✅ **Skip the PySpark rewrite** — Keep your enterprise logic in C#. Stop hiring Python consultants to rewrite domain logic you already perfected in .NET.
 - ✅ **Pure C#** — LINQ all the way down
 
 > [!TIP]
@@ -113,9 +114,9 @@ DataLinq.NET provides tools to abstract the *source* of data from the *processin
 > [!IMPORTANT]
 > Any `IAsyncEnumerable<T>` source integrates natively.
 
-### Examples
+### Zero-Friction EF Core Integration
 
-Already using Entity Framework Core? DataLinq.NET plugs right in:
+Already using Entity Framework Core? DataLinq.NET plugs right in. Stream millions of database rows natively without changing your `DbContext`:
 
 ```csharp
 // EF Core — Native support
@@ -126,6 +127,8 @@ await dbContext.Orders.AsAsyncEnumerable()
 *   ✅ EF Core handles database access
 *   ✅ DataLinq.NET handles processing logic
 *   ✅ Works with SQL Server, PostgreSQL, MySQL, SQLite
+
+### REST APIs & Message Queues
 
 Need to integrate REST APIs or message queues? Use polling and buffering:
 

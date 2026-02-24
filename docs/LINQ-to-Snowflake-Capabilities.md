@@ -171,6 +171,8 @@ Func<decimal, bool> f = x => x > 1000;
 // → WHERE auto_class_customvalidator(amount, status)
 ```
 
+> ⚠️ **FinOps Note:** While Auto-UDFs are powerful, they bypass Snowflake's native query optimizer. For heavy filtering, prefer standard LINQ operators over custom C# methods to ensure predicate pushdown and minimize cloud compute costs.
+
 > ⚠️ **Performance & billing impact:** Server-side functions bypass Snowflake's query optimizer (no predicate pushdown). Prefer native operators (`.Where(o => o.Amount > 1000)`) when possible. The Roslyn analyzer (`DFSN004`) warns at build time.
 
 ### 12. Build-Time Diagnostics
