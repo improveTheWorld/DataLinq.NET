@@ -37,6 +37,10 @@ DataLinq translates C# LINQ expressions to Spark DataFrame operations:
 - ✅ Type-safe, fluent API that feels C# native
 - ✅ No need to learn Spark internals
 
+### The `dotnet/spark` Successor
+
+If your team is stranded on old, deprecated versions of Microsoft's `dotnet/spark`, DataLinq is your lifeboat. DataLinq.Spark provides a modern, commercially maintained replacement that generates highly optimized execution plans without the overhead of bridging every single method call. Stop worrying about deprecation and skip the PySpark rewrite.
+
 ---
 
 ## Architecture
@@ -278,36 +282,36 @@ await results.ForEachCase(
 
 ### ForEach (Row Processing)
 
-Process each row and collect results back. Perfect for counting, summing, or logging.
+Process each row and collect results back. Perfect for counting, summing, or logging. DataLinq.Spark implements the **Delta Reflection Protocol**, which automatically synchronizes your local fields with the distributed execution state after the cluster finishes processing.
 
 ```csharp
-// Count and sum with a lambda
+// 1. Lambda closure — captured variables sync back
 int count = 0;
 double total = 0;
 query.ForEach(order => { count++; total += order.Amount; }).Do();
 Console.WriteLine($"Processed {count} orders, total: {total}");
 
-// Or use instance methods
+// 2. Instance method — instance fields sync back
 var processor = new OrderProcessor();
 query.ForEach(processor.Process).Do();
 Console.WriteLine($"Result: {processor.Count} orders");
 
-// Or static methods
+// 3. Static method — static fields sync back
 query.ForEach(Stats.Process).Do();
 Console.WriteLine($"Result: {Stats.Count} orders");
 ```
 
-**Rules:**
+**Synchronization Rules:**
 
 | Rule | Description |
 |------|-------------|
-| Call `.Do()` | ForEach is lazy - nothing happens until you call `.Do()` |
-| Use simple types | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, `string` are collected back |
-| Collections don't work | `List<T>`, `Dictionary` etc. are NOT collected |
-| String order varies | If collecting strings, the order may vary |
+| **Call `.Do()`** | `ForEach` is lazy. No distributed execution (or sync-back) occurs until you call `.Do()`. |
+| **Primitives Only** | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, and `string` fields are synchronized. |
+| **Collections Fail** | `List<T>`, `Dictionary`, arrays, etc. are **NOT** synchronized back. Use numeric counters instead. |
+| **String Concatenation** | If collecting strings, the final appended order is **non-deterministic** due to distributed parallelism. |
 
 > [!TIP]
-> **ForEach runs your code in parallel across the cluster.** Results are automatically collected and merged back.
+> **Why this works:** The Delta Reflection Protocol serializes your instance/static states, ships them to the executor nodes, captures the mutated deltas after the `ForEach` runs in parallel, and safely merges those primitive deltas back into your original memory context on the driver.
 
 ---
 
@@ -335,12 +339,12 @@ var results = orders
 
 | Rule | Reason |
 |------|--------|
-| Methods must be **static** | Instance methods only work in `ForEach`, not in `Where`/`Select` |
+| Support for **Instance Methods** & **Closures** | You can use local variable closures and instance methods (e.g., injected services) in `Where`/`Select`! DataLinq automatically re-hydrates your class on the Spark worker. |
 | Use primitive types | `int`, `long`, `double`, `float`, `string`, `bool` only |
 | No `decimal` | Use `double` instead |
 
-> [!IMPORTANT]
-> **Static methods only in Where/Select!** If you need instance methods, use `ForEach` or `Pull()` to process locally.
+> [!TIP]
+> **Performance Note:** While instance methods and closures are fully supported in `Where` and `Select`, they carry a slight serialization overhead. DataLinq issues an informational analyzer warning (`DFSP005`) to keep you aware of this translation path.
 
 **Automatic Deployment:**
 
@@ -393,7 +397,7 @@ DataLinq includes a **Roslyn analyzer** that catches common mistakes at compile 
 | **DFSP001** | String field in ForEach - order may vary | Accept or use numeric counter |
 | **DFSP002** | Collection field won't be collected | Use numeric counters instead |
 | **DFSP004** | Custom method detected | Informational - performance note |
-| **DFSP005** | Instance method in Where/Select | Use static method or ForEach |
+| **DFSP005** | Instance method in Where/Select | ℹ️ Translated via IL wrapper (closure overhead) |
 | **DFSP006** | Multiple custom methods | Consider combining into one |
 | **DFSP007** | Decimal property in model | ⚠️ Auto-converts to double (precision loss) |
 | **DFSP008** | Float property in model | ℹ️ Auto-converts to double |
@@ -402,22 +406,14 @@ DataLinq includes a **Roslyn analyzer** that catches common mistakes at compile 
 
 ```csharp
 var validator = new OrderValidator();
+
+// ℹ️ DFSP005: Instance method detected in Where/Select
+// This works perfectly! DataLinq will instantiate OrderValidator on the remote Spark JVM.
 query.Where(o => validator.IsValid(o));  
-//                ^^^^^^^^^^^^^^^^^^^
-// ❌ DFSP005: Instance method not supported in Where - use static method
 ```
 
-**Fix:**
-```csharp
-// Option 1: Make it static
-query.Where(o => OrderValidator.IsValid(o));
-
-// Option 2: Use ForEach (supports instance methods)
-query.ForEach(validator.Process).Do();
-
-// Option 3: Process locally
-query.Pull().Where(o => validator.IsValid(o));
-```
+**Understanding the warning:**
+DFSP005 is an informational warning. It simply reminds you that using an instance method incurs a serialization to synchronize the instance state across the distributed worker nodes.
 
 ### Suppressing Warnings
 
