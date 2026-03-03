@@ -96,37 +96,39 @@ using DataLinq.SnowflakeQuery;
 
 ### Connecting with the Context API (Recommended)
 
+DataLinq supports both standard password and RSA Key-Pair authentication.
+
+**1. Standard Password Auth:**
 ```csharp
 // Create a SnowflakeContext with required parameters
 await using var context = Snowflake.Connect(
-    account: "xxxxxxx.us-east-1",
+    account: "xy12345.us-east-1",
     user: "my_user",
     password: "my_password",
     database: "MY_DB",
     warehouse: "MY_WAREHOUSE"
 );
+```
 
-// Read from tables or SQL
-var orders = context.Read.Table<Order>("orders");
-
-// Build Query
-var query = orders
-    .Where(o => o.Status == "Active")
-    .Where(o => o.Amount > 1000)
-    .OrderByDescending(o => o.Date)
-    .Select(o => new { o.Id, o.CustomerName, o.Amount });
-
-// Execute
-var results = await query.ToList();
+**2. RSA Key-Pair Auth (Recommended for service accounts):**
+```csharp
+// Connect using a PKCS#8 undecrypted private key file (.pem or .p8)
+await using var context = Snowflake.Connect(
+    account: "xy12345.us-east-1",
+    user: "svc_account",
+    privateKeyFile: new FileInfo("path/to/rsa_key.p8"),
+    database: "MY_DB",
+    warehouse: "MY_WAREHOUSE"
+);
 ```
 
 **Advanced Configuration:**
 
 ```csharp
 await using var context = Snowflake.Connect(
-    account: "xxxxxxx",
+    account: "xy12345.us-east-1",
     user: "my_user",
-    password: "my_password",
+    password: "my_password", // or use privateKey / privateKeyFile
     database: "MY_DB",
     warehouse: "MY_WAREHOUSE",
     configure: opts => {
@@ -440,7 +442,7 @@ var allItems = orders.SelectMany(o => o.Items);
 
 > Write data back to Snowflake using the unified Write API.
 > 
-> **O(1) Memory**: All writes use native `IAsyncEnumerable` streaming. Data is batched, staged via PUT, and bulk-loaded via COPY INTO. No full materialization on the client.
+> **O(1) Memory**: All client-side writes use native `IAsyncEnumerable` streaming. Data is broken into batches (default **10,000 rows per batch**), staged via `PUT` to an internal stage, and bulk-loaded via `COPY INTO` or `MERGE INTO`. No full materialization on the client.
 
 ### Write Patterns
 
@@ -622,7 +624,7 @@ int dropped = context
     orders.Select(o => new { o.OrderId, o.CustomerName })  // SELECT order_id, customer_name
     ```
 
-    When reading results back, column names are automatically converted back to PascalCase for object hydration. Small naming mismatches (≤2 characters) are tolerated via fuzzy matching.
+    When reading results back, column names are automatically converted back to PascalCase for object hydration. Small naming mismatches (≤2 characters) are tolerated via ObjectMaterializer's fuzzy matching. Acronyms are handled correctly: `IPAddress` → `ip_address` → `IP_ADDRESS` → `IpAddress`.
 
 4.  **Debugging**: Use `.Spy()` or `.Show()` to inspect intermediate results during development.
     ```csharp
