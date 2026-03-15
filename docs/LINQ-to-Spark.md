@@ -21,11 +21,13 @@ Write idiomatic C# LINQ that executes on Apache Spark clusters.
    - [Set Operations](#set-operations)
    - [Math & String](#math--string-functions)
    - [Caching & Partitioning](#caching--partitioning)
-6. [Build-Time Protections](#build-time-protections)
-7. [Write Operations](#write-operations)
-8. [Best Practices](#best-practices)
-9. [Comparison with SnowflakeQuery](#comparison-with-snowflakequery)
-10. [See Also](#see-also)
+6. [Pull — Streaming Data to the Driver](#pull--streaming-data-to-the-driver)
+7. [Licensing](#licensing)
+8. [Build-Time Protections](#build-time-protections)
+9. [Write Operations](#write-operations)
+10. [Best Practices](#best-practices)
+11. [Known Limitations](#known-limitations)
+12. [See Also](#see-also)
 
 ---
 
@@ -45,26 +47,25 @@ If your team is stranded on old, deprecated versions of Microsoft's `dotnet/spar
 
 ## Architecture
 
-The provider follows the standard `IQueryable` pattern, translated to Spark DataFrame operations:
+DataLinq.Spark translates C# LINQ expression trees into Spark DataFrame operations. Each LINQ operator (`.Where()`, `.Select()`, etc.) builds up a deferred expression tree that is translated and executed only when you call an action method (`.ToArray()`, `.Pull()`, `.Count()`, etc.).
 
 ### The Translation Pipeline
 
 ```mermaid
 graph TD
-    UserCode[C# LINQ Code] -->|Expression Tree| Provider[SparkQueryProvider]
-    Provider -->|Visit Tree| Translator[SparkExpressionTranslator]
-    Translator -->|Generate| Column[Spark Column Expression]
-    Column -->|Execute| Spark[Microsoft.Spark / JVM]
-    Spark -->|DataFrame| Results[Spark DataFrame]
-    Results -->|Collect| Iterator[Row Iterator]
-    Iterator -->|Map| Objects[C# Objects]
+    UserCode[C# LINQ Code] -->|Expression Tree| Translator[ColumnExpressionTranslator]
+    Translator -->|Generate| Column[Spark Column Expressions]
+    Column -->|Apply to| DF[DataFrame Operations]
+    DF -->|Execute| Spark[Microsoft.Spark / JVM]
+    Spark -->|Action| Results[Row Iterator / Scalar]
+    Results -->|Map| Objects[C# Objects]
 ```
 
 ### Key Components
 
-1.  **Expression Tree Translator**: Parses C# LINQ expressions at runtime and converts them to Spark Column operations (`o.Amount > 100` → `col("amount") > 100`).
-2.  **Column Mapper**: Bridges C# naming conventions (PascalCase) ↔ Spark conventions (snake_case) and handles nested object mapping.
-3.  **DataFrame Execution**: Manages the underlying `Microsoft.Spark` DataFrame state.
+1.  **Expression Tree Translator** (`ColumnExpressionTranslator`): Walks C# expression trees and converts them to Spark Column operations (`o.Amount > 100` → `col("amount") > 100`). Supports binary, unary, method calls, ternary, member init, and auto-UDF expressions.
+2.  **Column Mapper** (`ConventionColumnMapper`): Bridges C# naming conventions (PascalCase) ↔ Spark conventions (snake_case) and handles nested object mapping. Materializes Spark `Row` objects back into C# objects using compiled expression trees.
+3.  **DataFrame Execution**: `SparkQuery<T>` wraps a `DataFrame` and provides typed, fluent LINQ methods that compose DataFrame operations lazily.
 
 ---
 
@@ -153,9 +154,6 @@ var enriched = localData.Push(context).Where(x => x.Active);
 var query = context.Push(data, batchSize: 50_000);
 ```
 
-> [!TIP]
-> **Pull → Process → Push workflow:** Use `Pull()` to stream data locally, process with instance methods, then `Push()` back to Spark.
-
 ### Grouping and Aggregation
 
 Use fluent syntax for distributed aggregations:
@@ -220,9 +218,9 @@ var outerJoin = orders.Join(customers, o => o.CustomerId, c => c.Id,
 
 Perform advanced analytics (Ranking, Running Totals) using Spark's window functions.
 
-**Expression-Based API** (`WithWindowTyped`) - Fully type-safe:
+**Expression-Based API** (`WithWindow`) - Fully type-safe:
 ```csharp
-employees.WithWindowTyped(
+employees.WithWindow(
     spec => spec .PartitionBy(e => e.Department).OrderBy(e => e.HireDate),
     (e, w) => new
     {
@@ -259,26 +257,41 @@ Process multiple conditions in a single pass using the `Cases` API:
 
 ```csharp
 // 1. Categorize
-var categorized = query.Cases(
-    x => x.Amount > 1000,   // Premium
-    x => x.Amount > 500     // Standard
-    // Default: Basic
-);
-
+var results = query.Cases(
+    x => x.Amount > 1000,   // Premium (category 0)
+    x => x.Amount > 500     // Standard (category 1)
+    // Default: Basic        (category 2)
+)
 // 2. Transform per category
-var results = categorized.SelectCase(
-    premium => new { Id = premium.Id, Tag = "VIP" },
+.SelectCase(
+    premium  => new { Id = premium.Id, Tag = "VIP" },
     standard => new { Id = standard.Id, Tag = "Regular" },
-    basic => new { Id = basic.Id, Tag = "Economy" }
-);
-
-// 3. Dispatch (Write to different tables)
-await results.ForEachCase(
-    vip => vip.WriteTable("VIP_ORDERS"),
-    reg => reg.WriteTable("REG_ORDERS"),
-    eco => eco.WriteTable("ECO_ORDERS")
-);
+    basic    => new { Id = basic.Id, Tag = "Economy" }
+)
+// Or use object initializers with concrete types:
+// .SelectCase(
+//     premium  => new OrderTag { Id = premium.Id, Label = "VIP" },
+//     standard => new OrderTag { Id = standard.Id, Label = "Regular" }
+// )
+// 3. Dispatch (Write to different tables — async lambdas)
+await .ForEachCase(
+    async vip => await vip.WriteTable("VIP_ORDERS", mode: SaveMode.Overwrite),
+    async reg => await reg.WriteTable("REG_ORDERS", mode: SaveMode.Overwrite),
+    async eco => await eco.WriteTable("ECO_ORDERS", mode: SaveMode.Overwrite)
+)
+// 4. Extract results (unwraps the tuple to flat items)
+.AllCases()
+.OrderBy(r => r.Id)
+.ToList();
 ```
+
+> [!NOTE]
+> All write methods (`WriteTable`, `WriteParquet`, `WriteCsv`, etc.) return `Task`. The compiler warns (CS4014) if a Task is not awaited in an async context. Use the async `ForEachCase` overload with `async/await` to ensure writes execute.
+
+> [!NOTE]
+> **`SelectCase` return type:** `SelectCase` wraps each row in a tuple of `(int category, T item, TNew newItem)`.
+> When working with `SelectCase` results directly (e.g., filtering), access projected properties via `.newItem` (e.g., `x.newItem.Id`).
+> Call `.AllCases()` to unwrap the tuple and get just the projected items as a flat `SparkQuery<TNew>`.
 
 ### ForEach (Row Processing)
 
@@ -339,12 +352,12 @@ var results = orders
 
 | Rule | Reason |
 |------|--------|
-| Support for **Instance Methods** & **Closures** | You can use local variable closures and instance methods (e.g., injected services) in `Where`/`Select`! DataLinq automatically re-hydrates your class on the Spark worker. |
+| **Instance Methods & Closures Fully Supported** | Local variable closures (captured `Func<>` delegates) and instance methods work in `Where`/`Select`/`Cases`. DataLinq serializes the captured state via Row-based UDFs — closure variables and instance fields are transmitted to the Spark worker with their actual values. |
 | Use primitive types | `int`, `long`, `double`, `float`, `string`, `bool` only |
 | No `decimal` | Use `double` instead |
 
 > [!TIP]
-> **Performance Note:** While instance methods and closures are fully supported in `Where` and `Select`, they carry a slight serialization overhead. DataLinq issues an informational analyzer warning (`DFSP005`) to keep you aware of this translation path.
+> **Performance Note:** Instance methods and closures carry a slight serialization overhead (Row-based UDF wrapping). DataLinq issues an informational analyzer warning (`DFSP005`) to keep you aware of this translation path. Static methods are faster — they use direct UDF registration with no serialization.
 
 **Automatic Deployment:**
 
@@ -383,6 +396,83 @@ Control distributed execution:
 var cached = query.Cache();
 var repartitioned = query.Repartition(8);
 ```
+
+---
+
+## Pull — Streaming Data to the Driver
+
+`Pull()` streams data from Spark to the driver lazily, one row at a time. Unlike `ToArray()` / `ToList()` which collect everything into memory, `Pull()` uses `O(partition_size)` memory — suitable for large result sets.
+
+```csharp
+// Basic streaming — lazy IAsyncEnumerable<T>
+await foreach (var order in query.Pull())
+{
+    ProcessOrder(order);
+}
+
+// With prefetch (default: true) — reads next partition while you process
+await foreach (var order in query.Pull(prefetch: true))
+{
+    ProcessOrder(order);
+}
+```
+
+### Memory-Bounded Streaming
+
+`Pull(int bufferSize)` lets you control the maximum number of rows held in memory at any time. DataLinq auto-repartitions if needed to keep each partition within your memory budget:
+
+```csharp
+// Stream with at most 500 rows in memory at a time
+await foreach (var order in query.Pull(bufferSize: 500))
+{
+    ProcessOrder(order);
+}
+```
+
+> [!TIP]
+> **Pull → Process → Push workflow:** Use `Pull()` to stream data locally, process with instance methods, then `Push()` back to Spark.
+
+---
+
+## Licensing
+
+DataLinq.Spark uses a tiered licensing model:
+
+| Tier | Row Limit | How to Activate |
+|------|-----------|----------------|
+| **Development** | 1,000 rows | Default — no license needed |
+| **Production** | Unlimited | Set `DATALINQ_LICENSE_KEY` environment variable |
+
+### Zero-Friction Onboarding
+
+No license key is required to get started. When no license is detected, DataLinq automatically enables the Development tier, which provides full API access with a 1,000-row limit on action methods (`ToArray()`, `Pull()`, `Count()`, `First()`).
+
+```csharp
+// Works immediately — no license needed!
+var orders = context.Read.Parquet<Order>("/data/orders")
+    .Where(o => o.Amount > 100)
+    .ToArray();  // Limited to 1,000 rows in Development tier
+```
+
+### Production License
+
+To remove the row limit, set your license key as an environment variable:
+
+```bash
+export DATALINQ_LICENSE_KEY="your-license-key-here"
+```
+
+Or in `launchSettings.json`:
+```json
+{
+  "environmentVariables": {
+    "DATALINQ_LICENSE_KEY": "your-license-key-here"
+  }
+}
+```
+
+> [!NOTE]
+> The Development tier is fully functional — same API, same features. The only difference is the 1,000-row limit on data retrieval. This serves as a natural upgrade path: prototype freely, then purchase a license when you need production data volumes.
 
 ---
 
@@ -444,18 +534,25 @@ dotnet_diagnostic.DFSP001.severity = none
 
 ## Write Operations
 
-SparkQuery provides a fluent, awaitable Write API for various formats:
+All write methods return `Task<SparkWriteResult>` — the compiler warns (CS4014) if not awaited:
 
 ```csharp
 var query = context.Read.Table<Order>("orders").Where(o => o.Amount > 1000);
 
 // File outputs (Parquet, CSV, JSON, ORC)
 await query.WriteParquet("/output/high_value");
-await query.WriteCsv("/output/high_value_csv").WithHeader();
+await query.WriteCsv("/output/high_value_csv", header: true);
 await query.WriteJson("/output/high_value_json");
 
 // Table operations
-await query.WriteTable("analytics.high_value_orders").Overwrite();
+await query.WriteTable("analytics.high_value_orders", mode: SaveMode.Overwrite);
+
+// With partitioning (type-safe, auto snake_case)
+await query.WriteParquet("/output", mode: SaveMode.Overwrite, partitionBy: x => x.Region);
+await query.WriteParquet("/output", partitionBy: x => new { x.Region, x.Year });
+
+// Merge (upsert)
+await query.MergeTable("target_orders", o => o.OrderId);
 ```
 
 ---
@@ -477,7 +574,7 @@ query.Explain();
 ```
 
 ### 3. Optimize for Distribution
-- **Avoid Collect()**: `ToList()` transfers data to the driver. Only use it for small result sets.
+- **Use `Pull()` for large results**: `ToArray()` / `ToList()` collect everything into memory. Use `Pull()` for lazy streaming with `O(partition_size)` memory, or `Pull(bufferSize)` for bounded memory.
 - **Use Partitioning**: When writing large datasets, use `.PartitionBy(col)` to optimize downstream reads.
 - **Filter Early**: Apply `.Where()` as early as possible to reduce data shuffle.
 
@@ -505,19 +602,6 @@ query.OrderBy(x => x.Id).Skip(10).Take(5);
 >
 > For precision-critical decimal values (>15 digits), use `double` explicitly or store as strings.
 
-## Comparison with SnowflakeQuery
-
-| Feature | SparkQuery | SnowflakeQuery |
-|---------|------------|----------------|
-| **Execution Engine** | Apache Spark (JVM) | Snowflake SQL |
-| **Window Functions** | ✅ Supported | ✅ Supported |
-| **Set Operations** | ✅ Supported | ✅ Supported |
-| **Nested Data** | ✅ Struct (`.`) | ✅ `VARIANT` (`:`) |
-| **Caching** | ✅ Manual (`.Cache()`) | ⚡ Automatic |
-| **Distribution** | ✅ Manual (`.Repartition()`) | ⚡ Automatic |
-
-Both providers share ~95% API surface area, allowing you to reuse your LINQ skills across both Big Data platforms.
-
 ---
 
 ## Known Limitations
@@ -526,7 +610,6 @@ The following features are not currently supported due to architectural constrai
 
 | Feature | Issue | Workaround |
 |---------|-------|------------|
-| **Self-Joins** | `query.Join(query, ...)` fails | Create separate queries or use SQL |
 | **Composite Join Keys** | `Join(..., x => new { x.A, x.B }, ...)` fails | Join on single key, add `Where` clause for additional conditions |
 
 > [!TIP]

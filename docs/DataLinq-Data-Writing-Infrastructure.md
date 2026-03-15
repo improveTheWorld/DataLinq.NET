@@ -230,15 +230,20 @@ await records.MergeTable(context, "ORDERS", o => o.Id).UpdateOnly("AMOUNT");
 ### Spark
 
 ```csharp
-// From SparkQuery (just path)
+// From SparkQuery — all return Task<SparkWriteResult> (CS4014 warns if not awaited)
 await query.WriteParquet("/data/orders");
-await query.WriteParquet("/data/orders").Overwrite();
-await query.WriteCsv("/data/export.csv").WithHeader();
+await query.WriteParquet("/data/orders", mode: SaveMode.Overwrite);
+await query.WriteCsv("/data/export.csv", header: true);
 await query.WriteJson("/data/events.json");
-await query.WriteTable("catalog.db.orders");
+await query.WriteTable("catalog.db.orders", mode: SaveMode.Overwrite);
+await query.MergeTable("target_orders", o => o.OrderId);
+
+// With type-safe partitioning
+await query.WriteParquet("/data/orders", mode: SaveMode.Overwrite, partitionBy: x => x.Region);
 
 // From IEnumerable/List (context + path)
 await records.WriteParquet(context, "/data/orders");
+await records.WriteTable(context, "catalog.orders", mode: SaveMode.Overwrite);
 ```
 
 ---
