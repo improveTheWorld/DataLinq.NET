@@ -10,6 +10,7 @@ Write idiomatic C# LINQ that executes on Apache Spark clusters.
 4. [Usage Guide](#usage-guide)
    - [Connecting](#connecting-with-the-context-api)
    - [Reading Data](#reading-data)
+   - [Pushing In-Memory Data](#pushing-in-memory-data)
    - [Grouping and Aggregation](#grouping-and-aggregation)
    - [Joins](#joins)
 5. [Advanced Features](#advanced-features)
@@ -170,6 +171,9 @@ var stats = orders
     });
 ```
 
+> [!TIP]
+> **Performance Architecture (Aggregations):** Aggregate functions within `GroupBy` are executed as pure map-side reductions. To count or sum a filtered subset, apply a `Where` filter *before* grouping. DataLinq intentionally disables inline aggregate predicates (e.g., `Count(x => x.IsActive)`) to guarantee you benefit from partition-level filtering. Additionally, to calculate global statistics across an entire dataset, call aggregate methods directly on the query object rather than grouping by a constant string, which prevents unnecessary network shuffles.
+
 ### Joins
 
 Combine distributed datasets efficiently. Supports **inner**, **left**, **right**, and **outer** joins:
@@ -221,7 +225,7 @@ Perform advanced analytics (Ranking, Running Totals) using Spark's window functi
 **Expression-Based API** (`WithWindow`) - Fully type-safe:
 ```csharp
 employees.WithWindow(
-    spec => spec .PartitionBy(e => e.Department).OrderBy(e => e.HireDate),
+    spec => spec.PartitionBy(e => e.Department).OrderBy(e => e.HireDate),
     (e, w) => new
     {
         e.Name,
@@ -289,9 +293,8 @@ await .ForEachCase(
 > All write methods (`WriteTable`, `WriteParquet`, `WriteCsv`, etc.) return `Task`. The compiler warns (CS4014) if a Task is not awaited in an async context. Use the async `ForEachCase` overload with `async/await` to ensure writes execute.
 
 > [!NOTE]
-> **`SelectCase` return type:** `SelectCase` wraps each row in a tuple of `(int category, T item, TNew newItem)`.
-> When working with `SelectCase` results directly (e.g., filtering), access projected properties via `.newItem` (e.g., `x.newItem.Id`).
-> Call `.AllCases()` to unwrap the tuple and get just the projected items as a flat `SparkQuery<TNew>`.
+> **Strict Tuple Safety:** For complete pipeline traceability, `SelectCase` returns a strictly typed tuple: `(int category, T originalItem, TNew newItem)`.
+> This enterprise pattern guarantees you never lose the lineage of the original row. When working with intermediate results, access projected properties via `.newItem` (e.g., `x.newItem.Id`). To finalize the pipeline, call `.AllCases()` which automatically unwraps the tuple into a highly optimized, flat `SparkQuery<TNew>`.
 
 ### ForEach (Row Processing)
 
@@ -320,6 +323,7 @@ Console.WriteLine($"Result: {Stats.Count} orders");
 |------|-------------|
 | **Call `.Do()`** | `ForEach` is lazy. No distributed execution (or sync-back) occurs until you call `.Do()`. |
 | **Primitives Only** | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, and `string` fields are synchronized. |
+| **Additive Merge Only** | The protocol merges field deltas by **addition** across partitions. Only `+=`, `++`, and `-=` patterns produce correct results. Conditional assignments like `if (x > max) max = x` will produce incorrect values because each partition's delta is summed independently. Use server-side aggregations (`Max()`, `Min()`) for these operations. |
 | **Collections Fail** | `List<T>`, `Dictionary`, arrays, etc. are **NOT** synchronized back. Use numeric counters instead. |
 | **String Concatenation** | If collecting strings, the final appended order is **non-deterministic** due to distributed parallelism. |
 
@@ -370,11 +374,16 @@ var context = Spark.Connect(master, "MyApp", opts => opts.AutoDistributeAssembli
 
 ### Set Operations
 
+DataLinq executes set operations strictly at the partition level for extreme throughput:
+
 ```csharp
-var combined = query1.Union(query2);       // UNION ALL
+var combined = query1.Union(query2);       // UNION ALL (Zero-Shuffle)
 var common = query1.Intersect(query2);     // INTERSECT
 var diff = query1.Except(query2);          // EXCEPT
 ```
+
+> [!NOTE]
+> **Zero-Shuffle Union:** To maximize ingestion speed, `.Union()` maps directly to Spark's `union()` logical plan (equivalent to SQL `UNION ALL`). This preserves all incoming rows and bypasses the massive global shuffle required for deduplication. If your pipeline requires strict distinct rows, deliberately chain the `.DropDuplicates()` operator.
 
 ### Math & String Functions
 
@@ -387,6 +396,9 @@ var query = products.Select(p => new {
     Score = Math.Round(p.Rating, 2)
 });
 ```
+
+> [!TIP]
+> **Data Engineering Primitives:** The translation engine ships with highly optimized execution paths for core data-engineering mathematics. Specialized operations (like trigonometric `Math.Cos` or `Math.Sin`) are intentionally untranslated to encourage evaluating complex row-level math via vectorized UDFs, ensuring predictable cluster stability.
 
 ### Caching & Partitioning
 
@@ -534,9 +546,13 @@ dotnet_diagnostic.DFSP001.severity = none
 
 ## Write Operations
 
-All write methods return `Task<SparkWriteResult>` — the compiler warns (CS4014) if not awaited:
+All write methods return `Task<SparkWriteResult>` — the compiler warns (CS4014) if not awaited.
+
+`SaveMode` is part of `DataLinq.Spark` — no additional `using` required:
 
 ```csharp
+using DataLinq.Spark; // SaveMode is included
+
 var query = context.Read.Table<Order>("orders").Where(o => o.Amount > 1000);
 
 // File outputs (Parquet, CSV, JSON, ORC)
@@ -544,16 +560,19 @@ await query.WriteParquet("/output/high_value");
 await query.WriteCsv("/output/high_value_csv", header: true);
 await query.WriteJson("/output/high_value_json");
 
-// Table operations
+// Table operations (requires Hive metastore — see note below)
 await query.WriteTable("analytics.high_value_orders", mode: SaveMode.Overwrite);
 
 // With partitioning (type-safe, auto snake_case)
 await query.WriteParquet("/output", mode: SaveMode.Overwrite, partitionBy: x => x.Region);
 await query.WriteParquet("/output", partitionBy: x => new { x.Region, x.Year });
 
-// Merge (upsert)
+// Merge (upsert — requires Hive metastore for table targets)
 await query.MergeTable("target_orders", o => o.OrderId);
 ```
+
+> [!IMPORTANT]
+> **Table operations require Hive:** `WriteTable` and `MergeTable` targeting named tables use Spark's `insertInto`, which requires a Hive metastore. In local mode without Hive, use file-based writes (`WriteParquet`, `WriteCsv`, `WriteJson`) or the `IEnumerable.WriteTable(context, ...)` extension which writes via temporary Parquet files internally.
 
 ---
 
@@ -578,7 +597,14 @@ query.Explain();
 - **Use Partitioning**: When writing large datasets, use `.PartitionBy(col)` to optimize downstream reads.
 - **Filter Early**: Apply `.Where()` as early as possible to reduce data shuffle.
 
-### 4. Important Limitations
+### 4. Deterministic Execution & Key Selectors
+
+DataLinq guarantees replayable, fault-tolerant execution plans. To enforce this architecture:
+
+- **Strict Key Selectors:** To ensure optimal map-side shuffling and predicate pushdown, DataLinq enforces deterministic, direct property access for `Join` and `GroupBy` keys. Computed expressions (e.g., `x => x.Name.ToUpper()` or `x => x.Price > 10 ? "A" : "B"`) are intentionally rejected at compile-tree generation to prevent silent performance degradation. Always project computed keys in a preceding `Select` statement.
+- **Generator Isolation:** Non-deterministic local generators like `Guid.NewGuid()` cannot be embedded directly into projection trees. UUID generation should be handled at the ingestion source or mapped via deterministic hashing to maintain fault-tolerance during partition retries.
+
+### 5. Important Limitations
 
 > [!IMPORTANT]
 > **Skip() requires OrderBy()**: The `Skip()` method throws if called without a prior `OrderBy()` because Spark internally uses window functions (`RowNumber()`) to implement pagination.

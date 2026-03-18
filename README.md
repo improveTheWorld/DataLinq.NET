@@ -341,6 +341,7 @@ sparkContext.Read.Table<Order>("sales.orders")
 | ❄️ **[Snowflake](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Snowflake.md)** | LINQ-to-Snowflake Provider |
 | 🚀 **[Performance](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/ObjectMaterializer.md)** | The Zero-Allocation Engine |
 | 📋 **[API Reference](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/API-Reference.md)** | Complete API Documentation |
+| 🔀 **[Platform Divergence](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Platform-Specific-Divergences.md)** | Spark vs. Snowflake API Divergence Matrix |
 | 🧩 **[Extension Methods](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Extension-Methods-API-Reference.md)** | IEnumerable/IAsyncEnumerable/Parallel API Matrix |
 | 🔌 **[Integration Patterns](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Integration-Patterns-Guide.md)** | HTTP, Kafka, EF Core, WebSocket examples |
 | ⚡ **[Parallel Processing](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Parallel-Processing.md)** | ParallelQuery & ParallelAsyncQuery |
