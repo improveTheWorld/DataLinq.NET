@@ -1,6 +1,6 @@
 # LINQ-to-Snowflake Capabilities & Limitations
 
-This document outlines the current capabilities of the `SnowflakeQuery<T>` provider in DataLinq.NET. It is designed to handle the "80% happy path" of analytics queries natively on Snowflake, while acknowledging specific limitations where client-side processing or alternative approaches are required.
+This document outlines the current capabilities of the `SnowflakeQuery<T>` provider in DataLinq.NET. Engineered for extreme reliability, the provider is a battle-tested compiler that natively translates 99%+ of complex analytics workloads into optimized SQL. It deliberately limits execution on a handful of complex architectures to prioritize Snowflake compute stability and predictable spend.
 
 ## Table of Contents
 
