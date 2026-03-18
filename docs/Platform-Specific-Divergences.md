@@ -35,7 +35,6 @@ Due to the fundamental difference between distributed in-memory orchestrators (S
 | Scenario | DataLinq.Spark | DataLinq.Snowflake | The Engine Empathy Reason |
 |----------|----------------|--------------------|---------------------------|
 | **Keys** | ❌ **Rejected**. Must be direct property access. | ✅ **Supported**. Translates computed expressions directly to SQL. | Spark requires pure properties for deterministic map-side shuffling and predicate pushdown. Snowflake SQL engines excel at evaluating computed aggregates natively. |
-| **Math** | ❌ **Rejected**. (`Math.Cos` throws). | ✅ **Supported**. Supported via SQL mapping (`COS()`). | Spark translation focuses exclusively on core data-engineering primitives (`Abs`, `Pow`) to protect cluster stability. |
 | **UUIDs** | ❌ **Rejected**. (`Guid.NewGuid()`). | ✅ **Supported**. Supported via `UUID_STRING()`. | Spark enforces total determinism so that failed partitions can be retried identically without corrupting data pipelines. |
 | **Groups**| ❌ **Rejected** (No grouping by constants). | ✅ **Supported**. | Spark requires direct aggregates on the query object (`.Count()`) to prevent single-node bottlenecks over shuffling global constants. |
 
