@@ -1,6 +1,6 @@
 # DataLinq Test Coverage Report
 
-> **Generated:** February 2026  
+> **Generated:** March 2026  
 > **Test Framework:** xUnit  
 > **Coverage Tool:** Coverlet
 > **Total Tests:** 868 (99.5% pass)
@@ -33,19 +33,21 @@
 
 | Test Project | Total | Pass | Notes |
 |--------------|-------|------|-------|
-| `DataLinq.SparkQuery.UnitTests` | 54 | 54 | ✅ Fast, no Spark needed |
-| `DataLinq.SparkQuery.IntegrationTests` | 155 | 155 | ✅ Requires Spark backend |
-| **Spark Total** | **209** | **209** | ✅ 100% |
+| `DataLinq.SparkQuery.UnitTests` | 122 | 122 | ✅ Fast, no Spark needed |
+| `DataLinq.SparkQuery.IntegrationTests` | 250 | 250 | ✅ Requires Spark backend |
+| `SparkAudit_v100` (Adversarial Audit) | 306 | 306 | ✅ 31-batch external audit |
+| **Spark Total** | **678** | **678** | ✅ 100% |
 
 **Features Tested:**
-- Math functions: `Abs`, `Round`, `Ceiling`, `Floor`, `Sqrt`, `Pow`
-- String methods: `IndexOf`, `Replace`, `Length`, `Contains`, `StartsWith`, `EndsWith`
-- DateTime properties: `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`
+- Math functions: `Abs`, `Round`, `Ceiling`, `Floor`, `Sqrt`, `Pow`, `Cos`, `Sin`, `Tan`, `Acos`, `Asin`, `Atan`, `Log`, `Log10`, `Log2`, `Exp`
+- String methods: `IndexOf`, `Replace`, `Length`, `Contains`, `StartsWith`, `EndsWith`, `Trim`, `Substring`, `ToUpper`, `ToLower`
+- DateTime properties: `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`, `DayOfWeek`, `DayOfYear`
 - Higher-order array functions: `Any`→`exists`, `All`→`forall`, `Where`→`filter`, `Select`→`transform`
-- Cases pattern: Filter expression translation, SelectCase transforms, DataFrame integration
-- Write API: `WriteParquet`, `WriteCsv`, `WriteJson`, `WriteTable`
+- Cases pattern: Filter expression translation, SelectCase transforms, ForEachCase with async write
+- Write API: `WriteParquet`, `WriteCsv`, `WriteJson`, `WriteOrc`, `WriteTable`, `MergeTable`
 - Window functions, Joins, Grouping, Set operations
-- **v1.2.0:** Auto-UDF, Assembly Distribution, Adaptive Push, Decimal Conversion
+- Auto-UDF (static, instance, closure, lambda), Delta Reflection (ForEach + sync-back)
+- Streaming writes: `IEnumerable` and `IAsyncEnumerable` with O(1) memory
 
 ### SnowflakeQuery Tests (Enterprise)
 
@@ -227,4 +229,4 @@ This report is manually maintained. To update:
 
 ---
 
-*Last updated: February 14, 2026 (v1.0.0 — DataLinq.NET rebrand)*
+*Last updated: March 18, 2026 (v1.0.0 — Spark test coverage update)*
