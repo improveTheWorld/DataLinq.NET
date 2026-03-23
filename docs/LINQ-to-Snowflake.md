@@ -365,7 +365,7 @@ public class LineItem
 
 **2. Write — `[Variant]` properties are auto-serialized to JSON**
 
-When writing data, `[Variant]` properties are automatically serialized to JSON (camelCase). `CreateIfMissing()` creates VARIANT columns for these properties:
+When writing data, `[Variant]` properties are automatically serialized to JSON (camelCase). `createIfMissing: true` creates VARIANT columns for these properties:
 
 ```csharp
 var orders = new List<Order>
@@ -384,8 +384,8 @@ var orders = new List<Order>
 };
 
 // WriteTable auto-serializes [Variant] properties to JSON
-// CreateIfMissing() creates: id INTEGER, status VARCHAR, data VARIANT, items VARIANT
-await orders.WriteTable(context, "ORDERS").CreateIfMissing();
+// createIfMissing creates: id INTEGER, status VARCHAR, data VARIANT, items VARIANT
+await orders.WriteTable(context, "ORDERS", createIfMissing: true);
 ```
 
 **3. Read — Nested property access via colon syntax**
@@ -477,11 +477,8 @@ await localRecords.WriteTable(context, "ORDERS");  // Context required
 // Simple insert
 await records.WriteTable(context, "ORDERS");
 
-// With options (chainable)
-await records
-    .WriteTable(context, "ORDERS")
-    .CreateIfMissing()
-    .Overwrite();
+// With options (named parameters)
+await records.WriteTable(context, "ORDERS", createIfMissing: true, overwrite: true);
 ```
 
 ### Merge (Upsert)
@@ -490,19 +487,18 @@ await records
 // Simple upsert on key
 await records.MergeTable(context, "ORDERS", o => o.OrderId);
 
-// Update specific columns only (expression-based — type-safe)
-await records
-    .MergeTable(context, "CUSTOMERS", c => c.Email)
-    .UpdateOnly(c => c.Name, c => c.UpdatedAt);
+// Update specific columns only
+await records.MergeTable(context, "CUSTOMERS", c => c.Email,
+    updateOnly: new[] { "Name", "UpdatedAt" });
 ```
 
 ### Write Options
 
-| Method | Description |
-|--------|-------------|
-| `.CreateIfMissing()` | Create table if not exists |
-| `.Overwrite()` | Truncate before insert |
-| `.UpdateOnly(...)` | Merge: update specific columns |
+| Parameter | Description |
+|-----------|-------------|
+| `createIfMissing: true` | Create table if not exists |
+| `overwrite: true` | Truncate before insert |
+| `updateOnly: new[] { ... }` | Merge: update specific columns |
 
 ### Cases Pattern (Server-Side Routing)
 
@@ -559,7 +555,7 @@ context
     .CreateSchema("INTEGRATION");
 
 // Tables are created implicitly via WriteTable:
-await records.WriteTable(context, "ORDERS").CreateIfMissing();
+await records.WriteTable(context, "ORDERS", createIfMissing: true);
 ```
 
 ### Drop

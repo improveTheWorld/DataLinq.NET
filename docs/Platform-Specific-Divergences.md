@@ -53,7 +53,7 @@ Due to the fundamental difference between distributed in-memory orchestrators (S
 ### D. Writing & DDL
 | Action | DataLinq.Spark | DataLinq.Snowflake | The Engine Empathy Reason |
 |--------|----------------|--------------------|---------------------------|
-| **Writing** | `WriteTable`, `WriteParquet`, `WriteCsv`, `WriteJson`. | `WriteTable`, `MergeTable` (Requires Context for local data). | Spark is fundamentally a multi-format lakehouse engine. Snowflake is a strict tabular warehouse. |
+| **Writing** | `WriteTable`, `WriteParquet`, `WriteCsv`, `WriteJson`. All use `overwrite: true` for overwrite mode. | `WriteTable`, `MergeTable` (Requires Context for local data). Same `overwrite: true` / `createIfMissing: true` parameters. | Spark is fundamentally a multi-format lakehouse engine. Snowflake is a strict tabular warehouse. The write **syntax** is unified — `overwrite: true`, `createIfMissing: true` — for maximum portability. |
 | **Routing** | `ForEachCase(...)` with `async Task`. | `WriteTables(...)`, `MergeTables(...)`. | |
 | **DDL** | Implicit schema tracking via DataFrame API. | `CreateDatabase()`, `CreateSchema()`, `DropTable()`. | Snowflake allows pure database management commands that Spark dataframes do not directly model. |
 

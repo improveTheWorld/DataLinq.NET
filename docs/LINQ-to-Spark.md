@@ -279,9 +279,9 @@ var results = query.Cases(
 // )
 // 3. Dispatch (Write to different tables — async lambdas)
 await .ForEachCase(
-    async vip => await vip.WriteTable("VIP_ORDERS", mode: SaveMode.Overwrite),
-    async reg => await reg.WriteTable("REG_ORDERS", mode: SaveMode.Overwrite),
-    async eco => await eco.WriteTable("ECO_ORDERS", mode: SaveMode.Overwrite)
+    async vip => await vip.WriteTable("VIP_ORDERS", overwrite: true),
+    async reg => await reg.WriteTable("REG_ORDERS", overwrite: true),
+    async eco => await eco.WriteTable("ECO_ORDERS", overwrite: true)
 )
 // 4. Extract results (unwraps the tuple to flat items)
 .AllCases()
@@ -548,10 +548,8 @@ dotnet_diagnostic.DFSP001.severity = none
 
 All write methods return `Task<SparkWriteResult>` — the compiler warns (CS4014) if not awaited.
 
-`SaveMode` is part of `DataLinq.Spark` — no additional `using` required:
-
 ```csharp
-using DataLinq.Spark; // SaveMode is included
+using DataLinq.Spark;
 
 var query = context.Read.Table<Order>("orders").Where(o => o.Amount > 1000);
 
@@ -559,12 +557,13 @@ var query = context.Read.Table<Order>("orders").Where(o => o.Amount > 1000);
 await query.WriteParquet("/output/high_value");
 await query.WriteCsv("/output/high_value_csv", header: true);
 await query.WriteJson("/output/high_value_json");
+await query.WriteOrc("/output/high_value_orc");
 
 // Table operations (requires Hive metastore — see note below)
-await query.WriteTable("analytics.high_value_orders", mode: SaveMode.Overwrite);
+await query.WriteTable("analytics.high_value_orders", overwrite: true);
 
 // With partitioning (type-safe, auto snake_case)
-await query.WriteParquet("/output", mode: SaveMode.Overwrite, partitionBy: x => x.Region);
+await query.WriteParquet("/output", overwrite: true, partitionBy: x => x.Region);
 await query.WriteParquet("/output", partitionBy: x => new { x.Region, x.Year });
 
 // Merge (upsert — requires Hive metastore for table targets)

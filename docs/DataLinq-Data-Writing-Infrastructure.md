@@ -224,7 +224,7 @@ await context.Read.Table<Order>("ORDERS")
 
 // From IEnumerable/List (needs context)
 await records.WriteTable(context, "ORDERS");
-await records.MergeTable(context, "ORDERS", o => o.Id).UpdateOnly("AMOUNT");
+await records.MergeTable(context, "ORDERS", o => o.Id, updateOnly: new[] { "AMOUNT" });
 ```
 
 ### Spark
@@ -232,18 +232,18 @@ await records.MergeTable(context, "ORDERS", o => o.Id).UpdateOnly("AMOUNT");
 ```csharp
 // From SparkQuery — all return Task<SparkWriteResult> (CS4014 warns if not awaited)
 await query.WriteParquet("/data/orders");
-await query.WriteParquet("/data/orders", mode: SaveMode.Overwrite);
+await query.WriteParquet("/data/orders", overwrite: true);
 await query.WriteCsv("/data/export.csv", header: true);
 await query.WriteJson("/data/events.json");
-await query.WriteTable("catalog.db.orders", mode: SaveMode.Overwrite);
+await query.WriteTable("catalog.db.orders", overwrite: true);
 await query.MergeTable("target_orders", o => o.OrderId);
 
 // With type-safe partitioning
-await query.WriteParquet("/data/orders", mode: SaveMode.Overwrite, partitionBy: x => x.Region);
+await query.WriteParquet("/data/orders", overwrite: true, partitionBy: x => x.Region);
 
 // From IEnumerable/List (context + path)
 await records.WriteParquet(context, "/data/orders");
-await records.WriteTable(context, "catalog.orders", mode: SaveMode.Overwrite);
+await records.WriteTable(context, "catalog.orders", overwrite: true);
 ```
 
 ---
