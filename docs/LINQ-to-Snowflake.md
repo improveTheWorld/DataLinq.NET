@@ -487,9 +487,9 @@ await records.WriteTable(context, "ORDERS", createIfMissing: true, overwrite: tr
 // Simple upsert on key
 await records.MergeTable(context, "ORDERS", o => o.OrderId);
 
-// Update specific columns only
+// Update specific columns only (type-safe)
 await records.MergeTable(context, "CUSTOMERS", c => c.Email,
-    updateOnly: new[] { "Name", "UpdatedAt" });
+    updateOnly: c => new { c.Name, c.UpdatedAt });
 ```
 
 ### Write Options
@@ -498,7 +498,7 @@ await records.MergeTable(context, "CUSTOMERS", c => c.Email,
 |-----------|-------------|
 | `createIfMissing: true` | Create table if not exists |
 | `overwrite: true` | Truncate before insert |
-| `updateOnly: new[] { ... }` | Merge: update specific columns |
+| `updateOnly: c => new { c.Name }` | Merge: update specific columns (type-safe) |
 
 ### Cases Pattern (Server-Side Routing)
 

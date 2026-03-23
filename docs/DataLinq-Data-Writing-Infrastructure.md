@@ -224,7 +224,7 @@ await context.Read.Table<Order>("ORDERS")
 
 // From IEnumerable/List (needs context)
 await records.WriteTable(context, "ORDERS");
-await records.MergeTable(context, "ORDERS", o => o.Id, updateOnly: new[] { "AMOUNT" });
+await records.MergeTable(context, "ORDERS", o => o.Id, updateOnly: o => o.Amount);
 ```
 
 ### Spark
