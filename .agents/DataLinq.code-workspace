@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../../DataLinq"
+		},
+		{
+			"path": "../../DataLinq.Enterprise"
+		},
+		{
+			"path": "../../DataLinq_Audit"
+		}
+	],
+	"settings": {}
+}

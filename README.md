@@ -15,6 +15,17 @@ Let IntelliSense and the compiler do the work.
 [![Coverage](https://img.shields.io/badge/Code%20Coverage-60%25-yellowgreen)](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/COVERAGE.md)
 [![NuGet](https://img.shields.io/nuget/v/DataLinq.NET.svg?label=DataLinq.NET)](https://www.nuget.org/packages/DataLinq.NET/)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/DataLinq.NET.svg)](https://www.nuget.org/packages/DataLinq.NET/)
+[![Migrating from dotnet/spark?](https://img.shields.io/badge/dotnet%2Fspark-Deprecated%20→%20Migrate-red)](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Spark.md)
+
+## Licensing
+
+| Package | License | What's included |
+|---|---|---|
+| `DataLinq.NET` | **Apache 2.0 — Free** | Core streaming, SUPRA pattern, Cases/SelectCase, EF Core integration, CSV/JSON/YAML readers, parallel processing |
+| `DataLinq.Spark` | Commercial | LINQ-to-Spark provider. **Free dev tier: 1,000 rows. No license key, no credit card needed.** |
+| `DataLinq.Snowflake` | Commercial | LINQ-to-Snowflake provider. **Free dev tier: 1,000 rows. No license key, no credit card needed.** |
+
+> Everything in this README — SUPRA, Cases, file readers, EF Core integration — is in the free core package.
 
 ```bash
 # Install via NuGet
@@ -63,6 +74,19 @@ dotnet add package DataLinq.NET --version 1.0.0
 
 > [!TIP]
 > **Define the *what*. DataLinq.NET handles the *how*.**
+
+### How It Compares
+
+| | DataLinq.NET | dotnet/spark | CsvHelper | EF Core |
+|---|---|---|---|---|
+| **O(1) memory streaming** | ✅ | ✅ | ❌ | ❌ |
+| **Full LINQ type safety** | ✅ | Partial | ❌ | ✅ |
+| **Apache Spark backend** | ✅ *(premium)* | ✅ *(deprecated Mar 2025)* | ❌ | ❌ |
+| **Snowflake backend** | ✅ *(premium)* | ❌ | ❌ | ❌ |
+| **EF Core integration** | ✅ | ❌ | ❌ | ✅ |
+| **Cases / SelectCase** | ✅ | ❌ | ❌ | ❌ |
+| **Build-time safety** | ✅ Roslyn analyzer | ❌ | ❌ | Partial |
+| **Status** | ✅ Active | ❌ Deprecated | ✅ Active | ✅ Active |
 
 --- 
 
@@ -238,6 +262,9 @@ Your C# lambda expressions are decompiled at runtime and translated into **nativ
 ---
 
 ## 4. Quick Start
+
+> [!TIP]
+> **Everything below uses the free Apache 2.0 core package.** The Spark and Snowflake providers are commercial but include a full-featured **1,000-row free development tier** — no license key, no credit card required to start.
 
 ### Prerequisites
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
