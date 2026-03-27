@@ -1,405 +1,246 @@
 # DataLinq.NET — API Reference
 
-This document covers the **public API surface** of DataLinq.NET: the classes and methods you use directly when building data pipelines.
+> **Version:** 1.1  
+> **Last Updated:** March 2026  
+> **Namespace:** `DataLinq`
 
-> For the complete extension method matrix across all four paradigms (sync, async, parallel-sync, parallel-async), see the [Extension Methods API Reference →](Extension-Methods-API-Reference.md).
-
-## Table of Contents
-
-1. [Read Class](#read-class)
-2. [Writers Class](#writers-class)
-3. [IEnumerable Extensions](#ienumerable-extensions)
-4. [String Extensions](#string-extensions)
-5. [Extension Method Quick Reference](#extension-method-quick-reference)
+This document covers the **public API surface** of DataLinq.NET. For the full extension method matrix across all four paradigms (sync, async, parallel-sync, parallel-async), see the [Extension Methods API Reference →](Extension-Methods-API-Reference.md).
 
 ---
 
-## Read Class
+## Naming Convention
 
-Static class providing streaming data readers with lazy evaluation.
+DataLinq uses an **inverted suffix convention** to encourage async-first development:
 
-```csharp
-public static IEnumerable<string> text(StreamReader file, bool autoClose = true)
-```
-**Description:** Reads lines from a StreamReader  
-**Parameters:**
-- `file`: StreamReader instance to read from
-- `autoClose`: Whether to automatically close the stream (default: true)  
-**Returns:** `IEnumerable<string>` — Lazy enumerable of lines  
-**Example:**
-```csharp
-using var reader = new StreamReader("data.txt");
-var lines = Read.text(reader);
-```
+| Convention | Suffix | Returns | Example |
+|-----------|--------|---------|---------|
+| **Async (default)** | *(none)* | `IAsyncEnumerable<T>` | `Read.Csv<T>(path)` |
+| **Synchronous** | `Sync` | `IEnumerable<T>` | `Read.CsvSync<T>(path)` |
 
-```csharp
-public static IEnumerable<string> text(string path, bool autoClose = true)
-```
-**Description:** Reads lines from a text file  
-**Parameters:**
-- `path`: File path to read from
-- `autoClose`: Whether to automatically close the file stream (default: true)  
-**Returns:** `IEnumerable<string>` — Lazy enumerable of file lines  
-**Example:**
-```csharp
-var lines = Read.text("data.txt");
-```
-
-```csharp
-public static IEnumerable<T?> csv<T>(string path, string separator = ",", bool autoClose = true, params string[] schema)
-```
-**Description:** Reads and parses CSV files into strongly-typed objects  
-**Parameters:**
-- `path`: CSV file path
-- `separator`: Field separator (default: `","`)
-- `autoClose`: Whether to automatically close the file (default: true)
-- `schema`: Optional custom field schema (uses file header if not provided)  
-**Returns:** `IEnumerable<T?>` — Lazy enumerable of parsed objects  
-**Example:**
-```csharp
-var employees = Read.csv<Employee>("employees.csv", ",");
-```
+> [!TIP]
+> This is the opposite of the BCL convention (`Method` → sync, `MethodAsync` → async). DataLinq makes async the path of least resistance.
 
 ---
 
-## Writers Class
+## 1. Read Class — Data Ingestion
 
-Static class providing extension methods for writing data to various formats.
+Static class providing lazy, streaming data readers. All methods accept both file paths and `Stream` inputs.
 
-```csharp
-public static void WriteText(this IEnumerable<string> lines, StreamWriter file)
-```
-**Description:** Writes string enumerable to a StreamWriter  
-**Parameters:**
-- `lines`: Enumerable of strings to write
-- `file`: StreamWriter instance  
-**Example:**
-```csharp
-lines.WriteText(writer);
-```
+### CSV
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Read.Csv<T>(path, separator?, onError?, schema?)` | `IAsyncEnumerable<T>` | Simple async CSV reader |
+| `Read.Csv<T>(path, CsvReadOptions, ct?)` | `IAsyncEnumerable<T>` | Options-based async CSV reader |
+| `Read.Csv<T>(stream, ...)` | `IAsyncEnumerable<T>` | Stream overloads (same signatures) |
+| `Read.CsvSync<T>(...)` | `IEnumerable<T>` | Synchronous equivalents |
+| `Read.AsCsvSync<T>(string, ...)` | `IEnumerable<T>` | Parse CSV from an **in-memory string** |
 
 ```csharp
-public static void WriteText(this IEnumerable<string> lines, string path, bool autoFlash = true)
-```
-**Description:** Writes string enumerable to a text file  
-**Parameters:**
-- `lines`: Enumerable of strings to write
-- `path`: Output file path
-- `autoFlash`: Whether to auto-flush writes (default: true)  
-**Example:**
-```csharp
-processedLines.WriteText("output.txt");
+// Simple — async (default)
+await foreach (var order in Read.Csv<Order>("orders.csv"))
+    Console.WriteLine(order.Id);
+
+// Simple — sync
+foreach (var order in Read.CsvSync<Order>("orders.csv"))
+    Console.WriteLine(order.Id);
+
+// Options-based (full control)
+var options = new CsvReadOptions
+{
+    Separator = ";",
+    HasHeader = true,
+    AllowMissingTrailingFields = true,
+    ErrorAction = ReaderErrorAction.Skip
+};
+await foreach (var order in Read.Csv<Order>("orders.csv", options))
+    Console.WriteLine(order.Id);
 ```
 
-```csharp
-public static void WriteCSV<T>(this IEnumerable<T> records, StreamWriter file, bool withTitle = true, string separator = ",") where T : struct
-```
-**Description:** Writes strongly-typed objects to CSV format using StreamWriter  
-**Type Constraints:** `where T : struct`  
-**Parameters:**
-- `records`: Enumerable of objects to write
-- `file`: StreamWriter instance
-- `withTitle`: Whether to include header row (default: true)
-- `separator`: Field separator (default: `","`)  
-**Example:**
-```csharp
-products.WriteCSV(writer, withTitle: true, separator: ",");
-```
+→ Deep dive: [DataLinq-Data-Reading-Infrastructure.md](DataLinq-Data-Reading-Infrastructure.md)
+
+---
+
+### JSON
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Read.Json<T>(path, JsonSerializerOptions?, onError?, ct?)` | `IAsyncEnumerable<T>` | Simple async JSON reader |
+| `Read.Json<T>(path, JsonReadOptions<T>, ct?)` | `IAsyncEnumerable<T>` | Options-based async JSON reader |
+| `Read.Json<T>(stream, ...)` | `IAsyncEnumerable<T>` | Stream overloads |
+| `Read.JsonSync<T>(...)` | `IEnumerable<T>` | Synchronous equivalents |
 
 ```csharp
-public static void WriteCSV<T>(this IEnumerable<T> records, string path, bool withTitle = true, string separator = ",") where T : struct
-```
-**Description:** Writes strongly-typed objects to CSV file  
-**Type Constraints:** `where T : struct`  
-**Parameters:**
-- `records`: Enumerable of objects to write
-- `path`: Output CSV file path
-- `withTitle`: Whether to include header row (default: true)
-- `separator`: Field separator (default: `","`)  
-**Example:**
-```csharp
-products.WriteCSV("products.csv", withTitle: true, separator: ",");
+// Streams JSON arrays lazily — O(1) memory
+await foreach (var order in Read.Json<Order>("orders.json"))
+    Console.WriteLine(order.Amount);
+
+// With validation and guard rails
+var opts = new JsonReadOptions<Order>
+{
+    MaxDepth = 32,
+    MaxElements = 10_000,
+    ValidateElements = true,
+    ElementValidator = el => el.GetProperty("amount").GetDecimal() > 0
+};
+await foreach (var order in Read.Json<Order>("orders.json", opts))
+    Process(order);
 ```
 
 ---
 
-## IEnumerable Extensions
+### YAML
 
-Comprehensive extension methods for `IEnumerable<T>` manipulation.
-
-### Control Flow
-
-> **Note:** All `Until` overloads use **inclusive** stop semantics — the item that triggers the condition is **included** in the output. This is the opposite of LINQ's `TakeWhile` (which is exclusive).
-
-```csharp
-public static IEnumerable<T> Until<T>(this IEnumerable<T> items, Func<bool> stopCondition)
-```
-**Description:** Processes items until a global condition becomes true  
-**Parameters:**
-- `items`: Source enumerable
-- `stopCondition`: Function that returns true when processing should stop  
-**Returns:** `IEnumerable<T>` — Items up to and including the one where the condition became true  
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Read.Yaml<T>(path, onError?, ct?)` | `IAsyncEnumerable<T>` | Simple async YAML reader |
+| `Read.Yaml<T>(path, YamlReadOptions<T>, ct?)` | `IAsyncEnumerable<T>` | Options-based async YAML reader |
+| `Read.Yaml<T>(stream, ...)` | `IAsyncEnumerable<T>` | Stream overloads |
+| `Read.YamlSync<T>(...)` | `IEnumerable<T>` | Synchronous equivalents |
 
 ```csharp
-public static IEnumerable<T> Until<T>(this IEnumerable<T> items, Func<T, bool> stopCondition)
+// Multi-document YAML (--- separated)
+await foreach (var config in Read.Yaml<AppConfig>("configs.yaml"))
+    Apply(config);
 ```
-**Description:** Processes items until an item-specific condition is met (inclusive)  
-**Parameters:**
-- `items`: Source enumerable
-- `stopCondition`: Function that evaluates each item  
-
-```csharp
-public static IEnumerable<T> Until<T>(this IEnumerable<T> items, Func<T, int, bool> stopCondition)
-```
-**Description:** Processes items until a condition involving the item and its index is met (inclusive)  
-**Parameters:**
-- `items`: Source enumerable
-- `stopCondition`: Function that evaluates each item and its index  
-
-```csharp
-public static IEnumerable<T> Until<T>(this IEnumerable<T> items, int lastItemIdx)
-```
-**Description:** Processes items up to and including a specific index  
-**Parameters:**
-- `items`: Source enumerable
-- `lastItemIdx`: Last index to process (inclusive)  
-
-### Actions
-
-```csharp
-public static IEnumerable<T> ForEach<T>(this IEnumerable<T> items, Action<T> action)
-```
-**Description:** Executes an action for each item while maintaining the enumerable chain  
-**Parameters:**
-- `items`: Source enumerable
-- `action`: Action to execute for each item  
-**Returns:** `IEnumerable<T>` — Original enumerable for chaining  
-
-```csharp
-public static IEnumerable<T> ForEach<T>(this IEnumerable<T> items, Action<T, int> action)
-```
-**Description:** Executes an action with access to both item and index  
-**Parameters:**
-- `items`: Source enumerable
-- `action`: Action to execute with item and index  
-
-```csharp
-public static void Do<T>(this IEnumerable<T> items)
-```
-**Description:** Forces enumeration of the sequence without returning values  
-**Parameters:**
-- `items`: Source enumerable  
-
-```csharp
-public static void Do<T>(this IEnumerable<T> items, Action action)
-```
-**Description:** Executes an action for each enumeration step  
-**Parameters:**
-- `items`: Source enumerable
-- `action`: Action to execute during enumeration  
-
-### Cases Pattern
-
-```csharp
-public static IEnumerable<(int category, T item)> Cases<T>(this IEnumerable<T> items, params Func<T, bool>[] filters)
-```
-**Description:** Categorizes items based on predicates  
-**Parameters:**
-- `items`: Source enumerable
-- `filters`: Array of predicate functions for categorization  
-**Returns:** `IEnumerable<(int category, T item)>` — Items tagged with category indices  
-
-```csharp
-public static IEnumerable<(int category, T item, R newItem)> SelectCase<T, R>(this IEnumerable<(int category, T item)> items, params Func<T, R>[] selectors)
-```
-**Description:** Applies different transformations based on category  
-**Parameters:**
-- `items`: Categorized enumerable
-- `selectors`: Array of transformation functions for each category  
-**Returns:** `IEnumerable<(int category, T item, R newItem)>` — Items with transformations  
-
-```csharp
-public static IEnumerable<(int category, T item, R newItem)> ForEachCase<T, R>(this IEnumerable<(int category, T item, R newItem)> items, params Action<R>[] actions)
-```
-**Description:** Executes different actions based on category  
-**Parameters:**
-- `items`: Categorized enumerable with transformations
-- `actions`: Array of actions for each category  
-**Returns:** Same enumerable for chaining  
-
-```csharp
-public static IEnumerable<R> AllCases<T, R>(this IEnumerable<(int category, T item, R newItem)> items)
-```
-**Description:** Extracts transformed items from categorized enumerable  
-**Parameters:**
-- `items`: Categorized enumerable with transformations  
-**Returns:** `IEnumerable<R>` — Transformed items only  
-
-### Aggregation
-
-```csharp
-public static T Cumul<T>(this IEnumerable<T> sequence, Func<T?, T, T> cumulate)
-```
-**Description:** Performs cumulative operations on a sequence  
-**Parameters:**
-- `sequence`: Source enumerable
-- `cumulate`: Function to combine accumulator with current item  
-**Returns:** `T` — Final accumulated result  
-
-```csharp
-public static TResult Cumul<T, TResult>(this IEnumerable<T> sequence, Func<TResult?, T, TResult> cumulate, TResult? initial)
-```
-**Description:** Performs cumulative operations with an initial value  
-**Parameters:**
-- `sequence`: Source enumerable
-- `cumulate`: Function to combine accumulator with current item
-- `initial`: Initial accumulator value  
-**Returns:** `TResult` — Final accumulated result  
-
-```csharp
-public static dynamic Sum<T>(this IEnumerable<T> items)
-```
-**Description:** Generic sum operation using dynamic typing  
-**Parameters:**
-- `items`: Source enumerable of numeric values  
-**Returns:** `dynamic` — Sum of all items  
-
-### Utilities
-
-```csharp
-public static IEnumerable<T> MergeOrdered<T>(this IEnumerable<T> first, IEnumerable<T> second, Func<T, T, bool> isFirstLessThanOrEqualToSecond)
-```
-**Description:** Merges two ordered enumerables into a single ordered enumerable  
-**Parameters:**
-- `first`: First ordered enumerable
-- `second`: Second ordered enumerable
-- `isFirstLessThanOrEqualToSecond`: Comparison function  
-**Returns:** `IEnumerable<T>` — Merged ordered enumerable  
-
-```csharp
-public static IEnumerable<T> Take<T>(this IEnumerable<T> sequence, int start, int count)
-```
-**Description:** Takes a specific range of items  
-**Parameters:**
-- `sequence`: Source enumerable
-- `start`: Starting index
-- `count`: Number of items to take  
-**Returns:** `IEnumerable<T>` — Specified range of items  
-
-```csharp
-public static bool IsNullOrEmpty<T>(this IEnumerable<T> sequence)
-```
-**Description:** Checks if enumerable is null or empty  
-**Parameters:**
-- `sequence`: Enumerable to check  
-**Returns:** `bool` — True if null or empty  
-
-### String Building
-
-```csharp
-public static string BuildString(this IEnumerable<string> items, StringBuilder str = null, string separator = ", ", string before = "{", string after = "}")
-```
-**Description:** Builds formatted strings from string enumerables  
-**Parameters:**
-- `items`: Source string enumerable
-- `str`: Optional StringBuilder instance
-- `separator`: Separator between items (default: `", "`)
-- `before`: Prefix string (default: `"{"`)
-- `after`: Suffix string (default: `"}"`)  
-**Returns:** `string` — Formatted string  
 
 ---
 
-## String Extensions
+### Text (Line-by-Line)
 
-Extension methods for string manipulation and validation.
-
-### Validation
-
-```csharp
-public static bool IsNullOrEmpty(this string text)
-```
-**Description:** Checks if string is null or empty  
-**Returns:** `bool`  
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Read.Text(path, ct?)` | `IAsyncEnumerable<string>` | Async line reader |
+| `Read.Text(path, TextReadOptions, ct?)` | `IAsyncEnumerable<string>` | Options-based (encoding, buffer size) |
+| `Read.Text(stream, ...)` | `IAsyncEnumerable<string>` | Stream overloads |
+| `Read.TextSync(...)` | `IEnumerable<string>` | Synchronous equivalents |
 
 ```csharp
-public static bool IsNullOrWhiteSpace(this string text)
+await foreach (var line in Read.Text("server.log"))
+    if (line.Contains("ERROR")) Console.WriteLine(line);
 ```
-**Description:** Checks if string is null, empty, or contains only whitespace  
-**Returns:** `bool`  
-
-```csharp
-public static bool IsBetween(this string text, string start, string end)
-```
-**Description:** Checks if string starts with one delimiter and ends with another  
-**Returns:** `bool`  
-
-### Content Analysis
-
-```csharp
-public static bool StartsWith(this string value, IEnumerable<string> acceptedStarts)
-```
-**Description:** Checks if string starts with any of the provided prefixes  
-**Returns:** `bool`  
-
-```csharp
-public static bool ContainsAny(this string line, IEnumerable<string> tokens)
-```
-**Description:** Checks if string contains any of the specified tokens  
-**Returns:** `bool`  
-
-### Manipulation
-
-```csharp
-public static string ReplaceAt(this string value, int index, int length, string toInsert)
-```
-**Description:** Replaces substring at specific position  
-**Returns:** `string` — Modified string  
-
-```csharp
-public static int LastIdx(this string text)
-```
-**Description:** Gets the last valid index of the string  
-**Returns:** `int` — Last valid index (Length - 1)  
 
 ---
 
-## Extension Method Quick Reference
+### Excel
 
-### IEnumerable\<T\> Extensions
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Read.ExcelSheet<T>(path, sheetName, csvOpts?, excelOpts?, ct?)` | `IAsyncEnumerable<T>` | Read sheet by name |
+| `Read.ExcelSheet<T>(path, sheetIndex, csvOpts?, excelOpts?, ct?)` | `IAsyncEnumerable<T>` | Read sheet by index |
+| `Read.ExcelSheetSync<T>(...)` | `IEnumerable<T>` | Synchronous equivalents |
+| `Read.ExcelToTempCsv(path, options?)` | `string[]` | Convert all sheets to temp CSV files |
+
+```csharp
+// Read specific sheet
+await foreach (var row in Read.ExcelSheet<SalesData>("report.xlsx", "Q1 Sales"))
+    Process(row);
+```
+
+---
+
+## 2. Write Extensions — Data Output
+
+Extension methods for writing `IEnumerable<T>` to various formats.
+
+| Method | Description |
+|--------|-------------|
+| `WriteText(path, autoFlush?)` | Write string lines to file |
+| `WriteText(StreamWriter)` | Write string lines to stream |
+| `WriteCsv<T>(path, header?, separator?)` | Write objects to CSV file |
+| `WriteCsv<T>(StreamWriter, header?, separator?)` | Write objects to CSV stream |
+
+```csharp
+// Write results to CSV
+orders.Where(o => o.Amount > 1000)
+    .Select(o => new { o.Id, o.Region, o.Amount })
+    .WriteCsv("high_value_orders.csv");
+
+// Pipeline: read → transform → write
+Read.CsvSync<Order>("input.csv")
+    .Where(o => o.Status == "Active")
+    .ForEach(o => Console.WriteLine($"Processing {o.Id}"))
+    .WriteCsv("active_orders.csv");
+```
+
+→ Deep dive: [DataLinq-Data-Writing-Infrastructure.md](DataLinq-Data-Writing-Infrastructure.md)
+
+---
+
+## 3. IEnumerable\<T\> Extensions — Quick Reference
+
+All methods are lazy (deferred) unless marked as terminal.
 
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `Until(condition)` | Process until condition | `IEnumerable<T>` |
-| `ForEach(action)` | Execute action for each | `IEnumerable<T>` |
-| `Cases(filters)` | Categorize items | `IEnumerable<(int, T)>` |
-| `SelectCase(selectors)` | Transform by category | `IEnumerable<(int, T, R)>` |
-| `ForEachCase(actions)` | Execute by category | `IEnumerable<(int, T, R)>` |
-| `AllCases()` | Extract transformations | `IEnumerable<R>` |
-| `Cumul(function)` | Cumulative operation | `T` |
-| `Sum()` | Generic sum | `dynamic` |
-| `MergeOrdered(other, comparer)` | Merge ordered sequences | `IEnumerable<T>` |
-| `IsNullOrEmpty()` | Check if null/empty | `bool` |
-| `BuildString(options)` | Build formatted string | `string` |
-| `Flat()` | Flatten nested enumerables | `IEnumerable<T>` |
-| `Spy(tag, display)` | Debug enumerable | `IEnumerable<T>` |
+| **Control Flow** | | |
+| `Until(condition)` | Process until condition (**inclusive**) | `IEnumerable<T>` |
+| `ForEach(action)` | Execute action per item (lazy) | `IEnumerable<T>` |
+| `Do()` | Force enumeration (**terminal**) | `void` |
+| `Do(action)` | Force enumeration with action (**terminal**) | `void` |
+| **Cases Pattern** | | |
+| `Cases(predicates[])` | Categorize items | `IEnumerable<(int, T)>` |
+| `SelectCase(selectors[])` | Transform per category | `IEnumerable<(int, T, R)>` |
+| `ForEachCase(actions[])` | Side-effect per category | `IEnumerable<(int, T, R)>` |
+| `AllCases()` | Extract transformed items | `IEnumerable<R>` |
+| **Aggregation** | | |
+| `Cumul(function)` | Cumulative reduce | `T` |
+| `Sum()` | Generic sum (dynamic) | `dynamic` |
+| **Utilities** | | |
+| `MergeOrdered(other, comparer)` | Merge two sorted sequences | `IEnumerable<T>` |
+| `Take(start, count)` | Slice by range | `IEnumerable<T>` |
+| `IsNullOrEmpty()` | Null/empty check | `bool` |
+| `Flatten<T>()` | Flatten nested enumerables | `IEnumerable<T>` |
+| **Debugging** | | |
+| `Spy(tag)` | Log items to console (lazy) | `IEnumerable<T>` |
+| `Spy<T>(tag, formatter)` | Log with custom `Func<T, string>` | `IEnumerable<T>` |
 | `Display(tag)` | Output to console | `IEnumerable<T>` |
+| **String Building** | | |
+| `BuildString(separator, before, after)` | Build formatted string | `string` |
 
-### String Extensions
+→ Full 4-paradigm matrix: [Extension-Methods-API-Reference.md](Extension-Methods-API-Reference.md)
+
+---
+
+## 4. String Extensions
+
+Extension methods on `string` in the `DataLinq` namespace.
 
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `IsNullOrEmpty()` | Check if null/empty | `bool` |
+| `IsNullOrEmpty()` | Check if null or empty | `bool` |
 | `IsNullOrWhiteSpace()` | Check if null/whitespace | `bool` |
-| `IsBetween(start, end)` | Check delimiters | `bool` |
+| `IsBetween(start, end)` | Check start/end delimiters | `bool` |
 | `StartsWith(prefixes)` | Check multiple prefixes | `bool` |
 | `ContainsAny(tokens)` | Check for any token | `bool` |
 | `ReplaceAt(index, length, text)` | Replace at position | `string` |
-| `LastIdx()` | Get last index | `int` |
+| `LastIdx()` | Get last valid index | `int` |
 
-### Data Writing Extensions
+---
 
-| Method | Description | Returns |
-|--------|-------------|---------|
-| `WriteText(path, autoFlush)` | Write text lines | `void` |
-| `WriteCSV(path, title, separator)` | Write CSV data | `void` |
+## 5. Async & Parallel Extensions
+
+DataLinq provides the same extension API surface across four execution paradigms:
+
+| Paradigm | Target Type | Namespace | Use Case |
+|----------|-------------|-----------|----------|
+| Sync Sequential | `IEnumerable<T>` | `DataLinq` | Default for in-memory |
+| Async Sequential | `IAsyncEnumerable<T>` | `DataLinq` | I/O-bound streaming |
+| Sync Parallel | `ParallelQuery<T>` (PLINQ) | `DataLinq.Parallel` | CPU-bound parallelism |
+| Async Parallel | `ParallelAsyncQuery<T>` | `DataLinq.Parallel` | I/O-bound parallelism |
+
+→ Full matrix: [Extension-Methods-API-Reference.md](Extension-Methods-API-Reference.md)  
+→ ParallelAsyncQuery deep dive: [ParallelAsyncQuery-API-Reference.md](ParallelAsyncQuery-API-Reference.md)
+
+---
+
+## See Also
+
+- [DataLinq-Data-Reading-Infrastructure.md](DataLinq-Data-Reading-Infrastructure.md) — CSV/JSON/YAML deep dive (1375 lines)
+- [DataLinq-Data-Writing-Infrastructure.md](DataLinq-Data-Writing-Infrastructure.md) — Write operations
+- [Extension-Methods-API-Reference.md](Extension-Methods-API-Reference.md) — Full extension method matrix
+- [Cases-Pattern.md](Cases-Pattern.md) — Conditional routing pattern
+- [DataLinq-SUPRA-Pattern.md](DataLinq-SUPRA-Pattern.md) — Streaming pipeline pattern
+- [ObjectMaterializer.md](ObjectMaterializer.md) — Object materialization engine
+- [LINQ-to-Spark.md](LINQ-to-Spark.md) — Apache Spark integration
+- [LINQ-to-Snowflake.md](LINQ-to-Snowflake.md) — Snowflake Data Cloud integration

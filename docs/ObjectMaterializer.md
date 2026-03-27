@@ -3,7 +3,7 @@
 **A lightweight, high-performance library for materializing objects from structured data (CSV rows, test fixtures, etc.).**
 
 [![NuGet](https://img.shields.io/nuget/v/DataLinq.Core.Materialization.svg)](https://www.nuget.org/packages/DataLinq.Core.Materialization/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 ---
 
@@ -249,7 +249,7 @@ internal sealed class MemberMaterializationPlan<T>
 ```csharp
 public interface IHasSchema
 {
-    Dictionary<string, int> GetDictSchema();
+    Dictionary<string, int> GetSchema();
 }
 
 public class CsvRow : IHasSchema
@@ -659,7 +659,7 @@ Contributions welcome! Please:
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 
 ---
 
