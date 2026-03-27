@@ -120,6 +120,9 @@ using var context = Spark.Connect(SparkMaster.Yarn(), "MyApp", o => {
 });
 ```
 
+> [!CAUTION]
+> **One SparkContext per process.** The JVM shares a single `SparkContext`. Disposing any `Spark.Connect()` context kills the shared SparkContext for ALL instances in the same process. Do not create multiple contexts in the same application — reuse a single context throughout.
+
 ### Reading Data
 
 ```csharp
@@ -137,22 +140,20 @@ var highValue = orders.Where(o => o.Amount > 1000);
 
 ### Pushing In-Memory Data
 
-Push local data to Spark for distributed processing. Automatically batches large data for O(1) memory:
+Push local data to Spark for distributed processing. Use the fluent `.Push(context)` syntax:
 
 ```csharp
-// Small data - fast in-memory path
-var testData = new[] { new Order { Id = 1, Amount = 100 } };
+// Fluent syntax (recommended) — works with any IEnumerable<T>
+var query = testData.Push(context).Where(x => x.Active);
+
+// Async sources (IAsyncEnumerable<T>) — returns Task<SparkQuery<T>>
+var query = await asyncStream.Push(context);
+
+// Custom batch size for large datasets
+var query = largeData.Push(context, batchSize: 50_000);
+
+// Context method syntax (equivalent, IEnumerable only)
 var query = context.Push(testData);
-
-// Large data - automatically batched (O(1) memory)
-var millionRows = GenerateLargeDataset();
-var query = context.Push(millionRows);  // Same API, auto-optimized!
-
-// Fluent syntax
-var enriched = localData.Push(context).Where(x => x.Active);
-
-// Custom batch size
-var query = context.Push(data, batchSize: 50_000);
 ```
 
 ### Grouping and Aggregation
@@ -261,7 +262,7 @@ Process multiple conditions in a single pass using the `Cases` API:
 
 ```csharp
 // 1. Categorize
-var results = query.Cases(
+var results = (await query.Cases(
     x => x.Amount > 1000,   // Premium (category 0)
     x => x.Amount > 500     // Standard (category 1)
     // Default: Basic        (category 2)
@@ -272,17 +273,12 @@ var results = query.Cases(
     standard => new { Id = standard.Id, Tag = "Regular" },
     basic    => new { Id = basic.Id, Tag = "Economy" }
 )
-// Or use object initializers with concrete types:
-// .SelectCase(
-//     premium  => new OrderTag { Id = premium.Id, Label = "VIP" },
-//     standard => new OrderTag { Id = standard.Id, Label = "Regular" }
-// )
 // 3. Dispatch (Write to different tables — async lambdas)
-await .ForEachCase(
+.ForEachCase(
     async vip => await vip.WriteTable("VIP_ORDERS", overwrite: true),
     async reg => await reg.WriteTable("REG_ORDERS", overwrite: true),
     async eco => await eco.WriteTable("ECO_ORDERS", overwrite: true)
-)
+))
 // 4. Extract results (unwraps the tuple to flat items)
 .AllCases()
 .OrderBy(r => r.Id)
@@ -457,13 +453,13 @@ DataLinq.Spark uses a tiered licensing model:
 
 ### Zero-Friction Onboarding
 
-No license key is required to get started. When no license is detected, DataLinq automatically enables the Development tier, which provides full API access with a 1,000-row limit on action methods (`ToArray()`, `Pull()`, `Count()`, `First()`).
+No license key is required to get started. When no license is detected, DataLinq automatically enables the Development tier, which provides full API access with a 1,000-row limit on action methods (`ToArray()`, `Pull()`, `Count()`, `First()`). **Exceeding the limit throws a `LicenseException`** — results are not silently truncated.
 
 ```csharp
 // Works immediately — no license needed!
 var orders = context.Read.Parquet<Order>("/data/orders")
     .Where(o => o.Amount > 100)
-    .ToArray();  // Limited to 1,000 rows in Development tier
+    .ToArray();  // Throws LicenseException if result exceeds 1,000 rows
 ```
 
 ### Production License
