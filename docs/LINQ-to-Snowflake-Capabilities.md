@@ -139,6 +139,7 @@ Mark complex properties with `[Variant]` to map them to Snowflake `VARIANT` colu
 - **Server-Side Functions**: Custom C# methods in `Where()`/`Select()` are automatically deployed and executed on Snowflake — static, instance, lambda, and entity-parameter patterns all supported. No `Pull()` needed.
 - **ForEach (Deferred)**: `ForEach(action)` deploys server-side logic to Snowflake. Execution deferred until `Count()`/`ToList()`/`ToArray()`. Static fields auto-synced back after execution. Supported accumulator types: `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
 - **Pull() (Escape Hatch)**: `Pull()` switches to client-side streaming for edge cases where server-side execution is not desired (e.g., accessing LINQ operators not available on `SnowflakeQuery<T>`).
+- **Dynamic Types**: `Table<dynamic>` is not supported. Use strong types. C# expression trees cannot capture dynamic language bindings (`CS1963`), meaning LINQ operations on `dynamic` cannot be translated to SQL.
 
 ### 10. Cases Pattern (Multi-Destination Routing)
 | Method | Description |

@@ -460,6 +460,9 @@ await context.Read.Table<Order>("ORDERS")
     .Where(o => o.Amount > 1000)
     .WriteTable("HIGH_VALUE_ORDERS");  // No context needed — server-side
 
+// Note: Remote-to-Remote WriteTable requires the target table to already exist.
+// There is no `createIfMissing` option for this pure server-side execution path.
+//
 // Note: WriteTable<T> requires T to be a concrete class with a
 // parameterless constructor. Anonymous types (new { ... }) are not supported.
 ```
@@ -511,17 +514,20 @@ await context.Read.Table<Order>("ORDERS")
         o => o.Status == "Rush"   // Case 1: Rush
         // Default: Case 2 (Supra)
     )
-    .WriteTables("PREMIUM_ORDERS", "RUSH_ORDERS", "STANDARD_ORDERS");
+    .WriteTables(new[] { "PREMIUM_ORDERS", "RUSH_ORDERS", "STANDARD_ORDERS" });
 ```
 
 **Multi-Table Merge with Different Keys:**
 
 ```csharp
-await categorizedQuery.MergeTables(
-    ("PREMIUM_ORDERS", o => o.OrderId),
-    ("RUSH_ORDERS", o => o.TrackingId),
-    ("STANDARD_ORDERS", o => o.BatchId)
-);
+// C# requires explicit Expression<> types for tuple inference — use a typed array:
+(string, Expression<Func<Order, int>>)[] targets = new[]
+{
+    ("PREMIUM_ORDERS", (Expression<Func<Order, int>>)(o => o.OrderId)),
+    ("RUSH_ORDERS", (Expression<Func<Order, int>>)(o => o.TrackingId)),
+    ("STANDARD_ORDERS", (Expression<Func<Order, int>>)(o => o.BatchId))
+};
+await categorizedQuery.MergeTables(targets);
 ```
 
 ### Transformed Writes
@@ -536,7 +542,7 @@ await context.Read.Table<Order>("ORDERS")
         o => new LiteOrder { Id = o.OrderId, Total = o.Amount },  // R2
         o => new LiteOrder { Id = o.OrderId, Total = o.Amount }   // Supra
     )
-    .WriteTables("PREMIUM_LITE", "RUSH_LITE", "STANDARD_LITE");
+    .WriteTables(new[] { "PREMIUM_LITE", "RUSH_LITE", "STANDARD_LITE" });
     // ✅ Writes LiteOrder columns, not Order columns
 ```
 
