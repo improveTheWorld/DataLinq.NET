@@ -38,6 +38,30 @@ await context.Read.Table<Order>("ORDERS")
 - `GroupJoin` result selectors now correctly translate aggregate methods (`Count()`, `Sum()`, `Min()`, `Max()`, `Average()`).
 - Fixed a naming inconsistency where write operations generated lowercased column names instead of Snowflake-compliant `SNAKE_CASE` for models with `ALL_CAPS` property names.
 
+## 🐛 Local Collection `.Any()` in Where Filters
+
+`localList.Any(s => s == o.Column)` now correctly translates to `column IN (val1, val2, ...)`. Previously, this pattern was incorrectly routed through the VARIANT array lambda translator, crashing with `PrimitiveParameterExpression`.
+
+```csharp
+var departments = new List<string> { "Engineering", "Sales" };
+var result = await employees
+    .Where(e => departments.Any(d => d == e.Department))
+    .ToList();
+// → WHERE department IN ('Engineering', 'Sales')
+```
+
+## 🐛 Ternary Expressions in GroupBy Keys
+
+Dynamic bucketing via ternary expressions in `GroupBy` keys is now supported:
+
+```csharp
+var tiers = await employees
+    .GroupBy(e => e.Salary > 70000 ? "High" : "Low")
+    .Select(g => new { Tier = g.Key, Count = g.Count() })
+    .ToList();
+// → GROUP BY CASE WHEN salary > 70000 THEN 'High' ELSE 'Low' END
+```
+
 ## 📖 Documentation
 
 - **MergeTables snippet** — Updated to include the explicit `Expression<>` type annotations required by C# for tuple-based match key declarations.
