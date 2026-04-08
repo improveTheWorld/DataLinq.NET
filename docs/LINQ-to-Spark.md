@@ -170,6 +170,15 @@ var stats = orders
         TotalSales = g.Sum(o => o.Amount),
         MaxSale = g.Max(o => o.Amount)
     });
+
+// You can use full computed expressions, Auto-UDFs, and Math functions inside GroupBy!
+var computedStats = orders
+    .GroupBy(o => Math.Round(o.Amount / 1000.0)) // Math expression
+    .Select(g => new { Bucket = g.Key, Count = g.Count() });
+
+var udfStats = orders
+    .GroupBy(o => MyHelpers.Categorize(o.Amount)) // Auto-UDF transpilation
+    .Select(g => new { Category = g.Key, Total = g.Sum(o => o.Amount) });
 ```
 
 > [!TIP]
@@ -274,7 +283,8 @@ var results = (await query.Cases(
     basic    => new { Id = basic.Id, Tag = "Economy" }
 )
 // 3. Dispatch (Write each category to a separate table)
-.WriteTables("VIP_ORDERS", "REG_ORDERS", "ECO_ORDERS"));
+// v1.2.0: Supports overwrite flags directly on categorized bulk writes
+.WriteTables("VIP_ORDERS", "REG_ORDERS", "ECO_ORDERS", overwrite: true));
 ```
 
 > [!NOTE]
