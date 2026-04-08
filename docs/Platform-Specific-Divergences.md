@@ -34,7 +34,8 @@ Due to the fundamental difference between distributed in-memory orchestrators (S
 ### A. Key Selectors & Determinism
 | Scenario | DataLinq.Spark | DataLinq.Snowflake | The Engine Empathy Reason |
 |----------|----------------|--------------------|---------------------------|
-| **Keys** | ❌ **Rejected**. Must be direct property access. | ✅ **Supported**. Translates computed expressions directly to SQL. | Spark requires pure properties for deterministic map-side shuffling and predicate pushdown. Snowflake SQL engines excel at evaluating computed aggregates natively. |
+| **GroupBy Keys** | ✅ **Supported**. Translates to Spark SQL or Auto-UDFs. | ✅ **Supported**. Translates computed expressions to SQL or Java transpiled UDFs. | (Unification Achieved in v1.1.1) Both engines now fully support complex GroupBy key expressions (e.g., `GroupBy(x => CustomUdf(x))`). |
+| **Join Keys** | ❌ **Rejected**. Must be direct property access. | ✅ **Supported**. | Spark requires pure properties for deterministic map-side shuffling. Use a preceding `Select` to project computed join keys. |
 | **UUIDs** | ❌ **Rejected**. (`Guid.NewGuid()`). | ✅ **Supported**. Supported via `UUID_STRING()`. | Spark enforces total determinism so that failed partitions can be retried identically without corrupting data pipelines. |
 | **Groups**| ❌ **Rejected** (No grouping by constants). | ✅ **Supported**. | Spark requires direct aggregates on the query object (`.Count()`) to prevent single-node bottlenecks over shuffling global constants. |
 
@@ -53,8 +54,8 @@ Due to the fundamental difference between distributed in-memory orchestrators (S
 ### D. Writing & DDL
 | Action | DataLinq.Spark | DataLinq.Snowflake | The Engine Empathy Reason |
 |--------|----------------|--------------------|---------------------------|
-| **Writing** | `WriteTable`, `WriteParquet`, `WriteCsv`, `WriteJson`. All use `overwrite: true` for overwrite mode. | `WriteTable`, `MergeTable` (Requires Context for local data). Same `overwrite: true` / `createIfMissing: true` parameters. | Spark is fundamentally a multi-format lakehouse engine. Snowflake is a strict tabular warehouse. The write **syntax** is unified — `overwrite: true`, `createIfMissing: true` — for maximum portability. |
-| **Routing** | `ForEachCase(...)` with `async Task`. | `WriteTables(...)`, `MergeTables(...)`. | |
+| **Writing** | `WriteTable`, `WriteParquet`, `WriteCsv`, `WriteJson`. | `WriteTable`, `MergeTable`. | Spark is a multi-format lakehouse engine. Snowflake is a strict tabular warehouse. The write syntax is unified (`overwrite: true`, `createIfMissing: true`). |
+| **Routing** | ✅ **Unified**. `WriteTables()`, `WriteParquets()`, `MergeTables()`. | ✅ **Unified**. `WriteTables()`, `MergeTables()`. | (Unification Achieved in v1.1.1) Both engines separate side-effect compute (`ForEachCase(Action<R>[])`) from high-speed bulk IO routing APIs. |
 | **DDL** | Implicit schema tracking via DataFrame API. | `CreateDatabase()`, `CreateSchema()`, `DropTable()`. | Snowflake allows pure database management commands that Spark dataframes do not directly model. |
 
 ## The Verdict

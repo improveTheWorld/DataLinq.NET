@@ -76,7 +76,7 @@ graph TD
 |---------|-------------|------------------|
 | **Filtering** | `Where(x => x.Id > 1)` | `.Filter(col("id") > 1)` |
 | **Projections** | `Select(x => new { x.Name })` | `.Select(col("name"))` |
-| **Ordering** | `OrderBy(x => x.Date)` | `.Sort(col("date"))` |
+| **Ordering** | `OrderBy`, `OrderByDescending`, `ThenBy` | `.Sort(...)` |
 | **Grouping** | `GroupBy(x => x.Dept)` | `.GroupBy("dept")` |
 | **Joins** | `Join(other, ...)` | `.Join(other, ...)` |
 | **Aggregations** | `Sum`, `Count`, `Max`, `Min` | `Functions.Sum()`, `Count()`... |
@@ -267,26 +267,18 @@ var results = (await query.Cases(
     x => x.Amount > 500     // Standard (category 1)
     // Default: Basic        (category 2)
 )
-// 2. Transform per category
+// 2. Transform per category (SelectCase preserves the category enum/index)
 .SelectCase(
     premium  => new { Id = premium.Id, Tag = "VIP" },
     standard => new { Id = standard.Id, Tag = "Regular" },
     basic    => new { Id = basic.Id, Tag = "Economy" }
 )
-// 3. Dispatch (Write to different tables — async lambdas)
-.ForEachCase(
-    async vip => await vip.WriteTable("VIP_ORDERS", overwrite: true),
-    async reg => await reg.WriteTable("REG_ORDERS", overwrite: true),
-    async eco => await eco.WriteTable("ECO_ORDERS", overwrite: true)
-))
-// 4. Extract results (unwraps the tuple to flat items)
-.AllCases()
-.OrderBy(r => r.Id)
-.ToList();
+// 3. Dispatch (Write each category to a separate table)
+.WriteTables("VIP_ORDERS", "REG_ORDERS", "ECO_ORDERS"));
 ```
 
 > [!NOTE]
-> All write methods (`WriteTable`, `WriteParquet`, `WriteCsv`, etc.) return `Task`. The compiler warns (CS4014) if a Task is not awaited in an async context. Use the async `ForEachCase` overload with `async/await` to ensure writes execute.
+> **Strict Compute vs. IO boundary:** `ForEachCase(Action<R>[])` is strictly used for firing row-level C# memory side-effects (leveraging the Delta Reflection pipeline). To physically partition and write Spark dataframes to disk, always use the dedicated `.WriteTables()`, `.WriteParquets()`, or `.WriteCsvs()` bulk-routing extensions.
 
 > [!NOTE]
 > **Strict Tuple Safety:** For complete pipeline traceability, `SelectCase` returns a strictly typed tuple: `(int category, T originalItem, TNew newItem)`.
@@ -596,7 +588,7 @@ query.Explain();
 
 DataLinq guarantees replayable, fault-tolerant execution plans. To enforce this architecture:
 
-- **Strict Key Selectors:** To ensure optimal map-side shuffling and predicate pushdown, DataLinq enforces deterministic, direct property access for `Join` and `GroupBy` keys. Computed expressions (e.g., `x => x.Name.ToUpper()` or `x => x.Price > 10 ? "A" : "B"`) are intentionally rejected at compile-tree generation to prevent silent performance degradation. Always project computed keys in a preceding `Select` statement.
+- **Strict Join Keys:** To prevent highly expensive cross-products during distributed joins, DataLinq enforces deterministic, direct property access for `Join` keys. Custom computations inside join keys (e.g., `x => x.Name.ToUpper()`) are intentionally rejected. Always project computed keys in a preceding `Select` statement. (Note: **GroupBy** keys natively support full computation and Auto-UDF transpilation).
 - **Generator Isolation:** Non-deterministic local generators like `Guid.NewGuid()` cannot be embedded directly into projection trees. UUID generation should be handled at the ingestion source or mapped via deterministic hashing to maintain fault-tolerance during partition retries.
 
 ### 5. Important Limitations
@@ -617,9 +609,11 @@ query.OrderBy(x => x.Id).Skip(10).Take(5);
 >
 > | .NET Type | Spark Storage | Round-Trip |
 > |-----------|--------------|------------|
-> | `decimal` | `double` | ✅ Automatic (precision limited to ~15 digits) |
+> | `decimal` | `double` | ✅ Automatic* (data round-trips only) |
 > | `float` | `double` | ✅ Automatic |
 > | `DateTime` | `string` (ISO 8601) | ✅ Automatic |
+>
+> * **Warning**: Auto-conversion for `decimal` only applies to data storage/materialization. You **cannot** use `decimal` literals or properties within LINQ expression trees (e.g., `Where(x => x.Price > 100m)`) due to C# compiler constraints (CS0266). Use `double` for properties you intend to filter or project.
 >
 > For precision-critical decimal values (>15 digits), use `double` explicitly or store as strings.
 
