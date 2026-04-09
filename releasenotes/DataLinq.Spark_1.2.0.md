@@ -67,7 +67,7 @@ orders.GroupBy(o => MyHelpers.Categorize(o.Amount))
       .Select(g => new { Category = g.Key, Count = g.Count() });
 ```
 
-Previously, GroupBy keys were restricted to direct property access. The refactored `GetGroupByExpressions` pipeline now routes all key expressions through `TranslateToColumn`, leveraging the same Auto-UDF infrastructure used by `Where` and `Select`.
+Previously, GroupBy keys were restricted to direct property access. v1.2.0 lifts this restriction — any expression that works in `Where` or `Select` now works in `GroupBy` key selectors, including ternary operators, `Math` functions, and your own static methods.
 
 ### ForEachCase via Delta Reflection Protocol
 `ForEachCase(Action<R>[])` now executes per-row side-effects on Spark workers with automatic primitive field sync-back to the driver — the same Delta Reflection Protocol used by `ForEach`.
@@ -76,7 +76,9 @@ Previously, GroupBy keys were restricted to direct property access. The refactor
 
 ## Bug Fixes
 
-- **BUG-001**: `ForEachCase` no longer throws `MessagePackSerializationException` when processing categorized items — caused by the old bulk-query API attempting to serialize `SparkQuery<R>` handles across the JVM boundary.
+- **Static field sync in ForEachCase**: Completed the Delta Reflection Protocol for `ForEachCase` when the C# compiler generates a `<>c` singleton closure (lambdas with no local captures, only static field writes). Static counters like `CaseStats.VipCount++` now correctly sync back to the driver after distributed execution.
+- **DisplayClass isolation**: Eliminated non-serializable objects (`DataFrame`, `SparkSession`) from leaking into the UDF closure's compiler-generated `DisplayClass`, preventing `MessagePackSerializationException` at runtime.
+- **PostExecutionSync propagation**: `AllCases()` and `UnCase()` now correctly propagate the sync-back callback, ensuring `ForEachCase` deltas are applied when chaining through the full Cases pipeline.
 - **Math.Max/Min**: Correct translation to Spark SQL `greatest()`/`least()` functions.
 - **SingleColumnMapper**: Fixed materialization of single-column projections from `SelectCase`.
 - **Spy diagnostic**: Restored `Spy()` chaining to work correctly in all pipeline positions.
