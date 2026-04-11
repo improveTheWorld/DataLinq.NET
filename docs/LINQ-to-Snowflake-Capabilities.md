@@ -137,17 +137,48 @@ Mark complex properties with `[Variant]` to map them to Snowflake `VARIANT` colu
 - **Single Element**: `Single()`, `SingleOrDefault()` (verify exactly 1 result).
 - **Predicate overloads**: `Count(pred)`, `Any(pred)`, `First(pred)` — all accept a predicate directly (equivalent to `.Where(pred).Count()` etc.).
 - **Server-Side Functions**: Custom C# methods in `Where()`/`Select()` are automatically deployed and executed on Snowflake — static, instance, lambda, and entity-parameter patterns all supported. No `Pull()` needed.
-- **ForEach (Deferred)**: `ForEach(action)` deploys server-side logic to Snowflake. Execution deferred until `Count()`/`ToList()`/`ToArray()`. Static fields auto-synced back after execution. Supported accumulator types: `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
-- **Pull() (Escape Hatch)**: `Pull()` switches to client-side streaming for edge cases where server-side execution is not desired (e.g., accessing LINQ operators not available on `SnowflakeQuery<T>`).
+- **ForEach (Deferred)**: `ForEach(action)` deploys server-side logic to Snowflake. Execution is deferred until a terminal (`.Do()`, `.Count()`, `.ToList()`, `.ToArray()`). Static fields auto-synced back after execution. Supported accumulator types: `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
+- **Pull() (Explicit Escape Hatch)**: `Pull()` explicitly switches to client-side `IAsyncEnumerable<T>` streaming. **This is the only correct way to shift to client-side execution.** Any operation after `Pull()` runs on the driver.
 - **Dynamic Types**: `Table<dynamic>` is not supported. Use strong types. C# expression trees cannot capture dynamic language bindings (`CS1963`), meaning LINQ operations on `dynamic` cannot be translated to SQL.
 
+### 9. Lazy Execution & Terminal Actions (The Contract)
+
+Every `SnowflakeQuery<T>` method is either a **lazy transformation** (returns `SnowflakeQuery<T>`, does nothing) or a **terminal action** (executes compute, returns a value).
+
+| Method | Kind | Description |
+|--------|------|-------------|
+| `ForEach(action)` | ☁️ Lazy | Registers stored procedure — deferred |
+| `ForEachCase(actions...)` | ☁️ Lazy | Per-category SP pipeline — deferred |
+| `AllCases()` | ☁️ Lazy | Wraps result columns into `SnowflakeQuery<R>` — no data moved |
+| `UnCase()` | ☁️ Lazy | Strips `_category` column — returns `SnowflakeQuery<T>` |
+| `Do()` | ⚡ **Terminal** | Execute plan, discard result — the natural "fire" idiom |
+| `Count()` | ⚡ **Terminal** | Execute plan, return row count |
+| `ToList()` / `ToArray()` | ⚡ **Terminal** | Execute plan, materialize to memory |
+| `First()` / `FirstOrDefault()` | ⚡ **Terminal** | Execute plan, return single element |
+| `Show()` | ⚡ **Terminal** | Execute plan, print to console |
+| `Pull()` | ⚡ **Terminal** | Execute plan, stream as `IAsyncEnumerable<T>` — O(1) memory |
+| `WriteTable()` / `MergeTable()` | ⚡ **Terminal** | Execute plan, write to Snowflake table |
+
+> [!WARNING]
+> **`SnowflakeQuery<T>` does NOT implement `IAsyncEnumerable<T>`.** You cannot `await foreach` directly on a query — it will not compile. This is intentional: the server/client execution boundary must always be explicit via a terminal action. Use `.Pull()` to stream, `.ToList()` to materialize, or `.Do()` to fire-and-forget.
+
+> `.Do()` is the Snowflake equivalent of Spark's `.Do()` and OSS DataLinq's `.Do()`. Use it when no return value is needed — `ForEach(action).Do()` is the correct canonical pattern, not `ForEach(action).Count()`.
+
 ### 10. Cases Pattern (Multi-Destination Routing)
-| Method | Description |
-|--------|-------------|
-| `Cases(predicates...)` | Categorize rows by conditions (SQL CASE WHEN) |
-| `SelectCase(selectors...)` | Transform each category (server-side projection) |
-| `WriteTables(tables...)` | Write each category to different table |
-| `MergeTables((table, key)...)` | Merge each category with different match key |
+| Method | Execution | Description |
+|--------|-----------|-------------|
+| `Cases(predicates...)` | ☁️ Server-side lazy | Categorize rows by conditions (SQL CASE WHEN) |
+| `SelectCase(selectors...)` | ☁️ Server-side lazy | Transform each category (server-side projection) |
+| `ForEachCase(actions...)` | ☁️ Server-side lazy | Per-category stored procedures with accumulator sync-back |
+| `AllCases()` | ☁️ Server-side lazy | Returns `SnowflakeQuery<R>` wrapping R columns — no data moved |
+| `UnCase()` | ☁️ Server-side lazy | Returns `SnowflakeQuery<T>` stripping categorization |
+| `WriteTables(tables...)` | ☁️ Server-side **terminal** | Write each category to different table |
+| `MergeTables((table, key)...)` | ☁️ Server-side **terminal** | Merge each category with different match key |
+
+> Write operations (`WriteTables`, `MergeTables`) are **terminals** — they execute immediately when awaited. All others above are lazy transformations. Use `.Do()` to trigger execution without needing a return value.
+>
+> 🚀 **Performance Feature: Terminal Auto-Materialization (TAM)**
+> To prevent the N+1 execution query penalty that arises from dynamic column branching, `WriteTables()` and `MergeTables()` conditionally wrap the base query in a temporary materialized table cache (`CREATE TEMPORARY TABLE`) when routing to multiple targets, so Snowflake performs the heavy scan exactly once. For `ForEachCase`, TAM is unconditionally injected into the deferred `PostExecutionSync` delegate at registration time. In both cases, the cache is automatically dropped upon exit.
 
 ### 11. Server-Side Functions (Custom C# Method Translation)
 
@@ -172,9 +203,7 @@ Func<decimal, bool> f = x => x > 1000;
 // → WHERE auto_class_customvalidator(amount, status)
 ```
 
-> ⚠️ **FinOps Note:** While Auto-UDFs are powerful, they bypass Snowflake's native query optimizer. For heavy filtering, prefer standard LINQ operators over custom C# methods to ensure predicate pushdown and minimize cloud compute costs.
-
-> ⚠️ **Performance & billing impact:** Server-side functions bypass Snowflake's query optimizer (no predicate pushdown). Prefer native operators (`.Where(o => o.Amount > 1000)`) when possible. The Roslyn analyzer (`DFSN004`) warns at build time.
+> ⚠️ **FinOps Note:** Auto-UDFs prevent Snowflake **micro-partition pruning** — the optimizer cannot push a UDF predicate below the table scan, so Snowflake must scan more data than a native comparison would require. The impact is real but scoped: the rest of your query (joins, grouping, projections) is still fully optimized. For high-cardinality filtering on large tables, prefer native LINQ operators. The Roslyn analyzer (`DFSN004`) warns at build time.
 
 ### 12. Build-Time Diagnostics
 | Rule | Severity | Description |

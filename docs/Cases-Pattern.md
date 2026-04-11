@@ -1,378 +1,448 @@
-# Cases/SelectCase/ForEachCase Pattern
+# Cases Pattern
 
-> **This document covers DataLinq.NET's core innovation: writing processing logic once and deploying it across batch, streaming, and distributed paradigms.**
+> **This document covers the DataLinq.NET Cases pattern — its philosophy, lazy execution contract, operator chaining rules, and API reference.**
 
 ---
 
 ## Table of Contents
 
-1. [Configuration-Driven Transformation Trees](#1-configuration-driven-transformation-trees)
-2. [Write Once, Process Anywhere](#2-write-once-process-anywhere)
-3. [The Cases/SelectCase/ForEachCase Pattern](#3-the-casesselectcaseforeachcase-pattern)
-4. [The Supra Category Pattern](#4-the-supra-category-pattern)
-5. [Multi-Type Branching](#5-multi-type-branching)
-6. [API Reference](#6-api-reference)
+1. [The Philosophy — What the Cases Pattern Is For](#1-the-philosophy--what-the-cases-pattern-is-for)
+2. [The Lazy Execution Contract](#2-the-lazy-execution-contract)
+3. [Operator Chaining — All Valid Orderings](#3-operator-chaining--all-valid-orderings)
+4. [The Exit Gate — `AllCases()` and `UnCase()`](#4-the-exit-gate--allcases-and-uncase)
+5. [The Supra Category](#5-the-supra-category)
+6. [Complete Examples](#6-complete-examples)
+7. [Multi-Type Branching](#7-multi-type-branching)
+8. [Write Once, Process Anywhere](#8-write-once-process-anywhere)
+9. [API Reference](#9-api-reference)
 
 ---
 
-## 1. Configuration-Driven Transformation Trees
+## 1. The Philosophy — What the Cases Pattern Is For
 
-DataLinq.NET introduces  **Cases/SelectCase/ForEachCase pattern** that lets you configure complex, multi-branch transformation trees **declaratively**. Despite defining multiple transformation paths upfront, the framework executes them **lazily**—each item flows through the pipeline **exactly once**, with **zero buffering** and **minimal memory footprint**.
+The Cases pattern answers a single question:
+
+> **"How do I route each item to a different processing branch, without loading everything into memory first?"**
+
+The traditional answer is `if/else` or `switch` inside a `foreach`. The problem: you break the pipeline. The data is already in memory. The decisions are tangled with the processing. Testing any single branch requires running all of them.
+
+DataLinq's answer is to treat **routing as a first-class lazy operation**:
 
 ```csharp
-// Configure a complete transformation tree ONCE
-await dataSource
+// ✅ The Cases philosophy: declare all branches upfront, execute nothing yet
+source
     .Cases(
-        data => data.Type == "Customer",
-        data => data.Type == "Order", 
-        data => data.Type == "Product"
+        item => item.Type == "A",   // Route 0
+        item => item.Type == "B"    // Route 1
+        // Everything else → supra (Route 2)
     )
     .SelectCase(
-        customer => EnrichCustomer(customer),      // Branch 1: Transform
-        order => CalculateOrderTotal(order),       // Branch 2: Transform
-        product => NormalizeProduct(product),      // Branch 3: Transform
-        unknown => LogUnknownType(unknown)         // Supra: Catch-all
+        a => Transform_A(a),        // Only runs for Route 0 items
+        b => Transform_B(b)         // Only runs for Route 1 items
     )
     .ForEachCase(
-        customer => await customerDB.SaveAsync(customer),   // Branch 1: Side-effect
-        order => await orderDB.SaveAsync(order),            // Branch 2: Side-effect
-        product => await productDB.SaveAsync(product),      // Branch 3: Side-effect
-        unknown => await errorLogger.LogAsync(unknown)      // Supra: Error handling
+        a => Accumulate_A(a),       // Side-effect: Route 0
+        b => Accumulate_B(b)        // Side-effect: Route 1
     )
-    .AllCases()
-    .WriteCsv("processed_output.csv");
-
-// ✅ Tree configured once, executed lazily
-// ✅ Each item processed exactly once
-// ✅ No intermediate collections
-// ✅ Constant memory usage
+    .AllCases()                     // Exit the Cases context → back to general query
+    .Do();                          // TERMINAL: trigger execution — nothing ran before this line
 ```
 
-**Key Benefits:**
-
-- **🎯 Declarative Configuration**: Define all transformation branches upfront in a readable, maintainable way
-- **⚡ Single-Pass Execution**: Despite multiple branches, each item flows through the pipeline exactly once
-- **💾 Memory Efficient**: Lazy evaluation means zero buffering—process gigabytes with constant memory
-- **🔧 Developer-Friendly**: Simple, configuration-like syntax that reads like a decision tree
+**Key principles:**
+- Every step above `AllCases()`/`UnCase()` is lazy — it declares *intent*, not execution
+- Items flow **one at a time**, never buffered
+- `AllCases()`/`UnCase()` is the **exit gate** back to the general query type
+- `.Do()` is the **default terminal** — "execute this, I need no return value"
 
 ---
 
-## 2. Write Once, Process Anywhere
+## 2. The Lazy Execution Contract
 
-The framework's **unified processing model** delivers on a revolutionary promise: **write your processing logic once, deploy it across batch and streaming paradigms without code changes**.
+Every operator in the Cases pipeline is a **lazy transformation**. Nothing executes until a **terminal action** is called.
 
-### Identical Syntax Across Paradigms
-
-```csharp
-// Define processing logic ONCE
-public static async Task ProcessBusinessLogic<T>(T dataSource) 
-    where T : IAsyncEnumerable<Transaction>
-{
-    await dataSource
-        .Cases(
-            tx => tx.Amount > 10000,
-            tx => tx.IsFlagged,
-            tx => tx.Country != "US"
-        )
-        .SelectCase(
-            highValue => ProcessHighValue(highValue),
-            suspicious => ProcessSuspicious(suspicious),
-            international => ProcessInternational(international),
-            standard => ProcessStandard(standard)
-        )
-        .ForEachCase(
-            highValue => await complianceDB.SaveAsync(highValue),
-            suspicious => await fraudDB.SaveAsync(suspicious),
-            international => await forexDB.SaveAsync(international),
-            standard => await standardDB.SaveAsync(standard)
-        )
-        .AllCases()
-        .WriteCsv("processed_transactions.csv");
-}
-
-// BATCH: Historical file processing
-await ProcessBusinessLogic(Read.Csv<Transaction>("historical_data.csv"));
-
-// STREAMING: Real-time event processing (IDENTICAL CODE!)
-await ProcessBusinessLogic(liveTransactionStream);
+```
+Cases()         → LAZY  (returns categorized query)
+SelectCase()    → LAZY  (returns transformed query)
+ForEachCase()   → LAZY  (registers side-effects)
+AllCases()      → LAZY  (exits Cases context, returns general query)
+UnCase()        → LAZY  (exits Cases context, returns general query)
+─────────────────────────────────────────────────────────
+Do()            → ✅ TERMINAL — execute, discard result
+Count()         → ✅ TERMINAL — execute, return count
+ToList()        → ✅ TERMINAL — execute, collect to memory
+WriteCsv()      → ✅ TERMINAL — execute, write to file
+WriteTable()    → ✅ TERMINAL — execute, write to Snowflake/Spark
+await foreach   → ✅ TERMINAL — execute, stream row by row
 ```
 
-### Zero-Cost Migration Path
+> **Rule**: Nothing crosses the wire, hits a database, or allocates significant memory until a terminal is called. The pipeline is just a description of what *will* happen.
+
+### `.Do()` is the canonical terminal
+
+When the pipeline's purpose is **side-effects only** (accumulators, logging, writing to external systems), and you don't need data back on the caller:
 
 ```csharp
-// DEVELOPMENT: Start with in-memory data
-var testData = new[] { 
-    new Order { Id = 1, IsUrgent = true },
-    new Order { Id = 2, IsUrgent = false }
-}.Async();
+// ✅ Correct — explicit, intention-revealing
+source.Cases(...).ForEachCase(...).AllCases().Do();
 
-// VALIDATION: Test with static files
-var devPipeline = Read.Csv<Order>("test_orders.csv")
-    .Cases(IsUrgent, IsInternational, IsHighValue)
-    .SelectCase(
-        urgent => ProcessUrgent(urgent),
-        international => ProcessInternational(international),
-        highValue => ProcessHighValue(highValue),
-        standard => ProcessStandard(standard)
-    )
-    .AllCases();
+// ⚠️ Misleading — implies you need the count
+source.Cases(...).ForEachCase(...).AllCases().Count();
 
-// PRODUCTION: Deploy to live streams (ZERO CODE CHANGES!)
-var prodPipeline = liveOrderStream
-    .Cases(IsUrgent, IsInternational, IsHighValue)     // Same predicates
-    .SelectCase(
-        urgent => ProcessUrgent(urgent),                // Same transforms
-        international => ProcessInternational(international),
-        highValue => ProcessHighValue(highValue),
-        standard => ProcessStandard(standard)
-    )
-    .AllCases();
+// ⚠️ Verbose — iterating only to trigger execution
+await foreach (var _ in source.Cases(...).ForEachCase(...).AllCases()) { }
 ```
 
-**Migration Benefits:**
-
-- ✅ **Develop with in-memory tables**: Test and debug directly in your IDE
-- ✅ **Validate performance with files**: Benchmark with realistic datasets
-- ✅ **Deploy to streams**: Switch to Kafka/EventHub/SignalR without refactoring
-- ✅ **Zero code changes**: Same predicates, same transformations, same side-effects
+`.Do()` exists on every query type in every DataLinq provider. It is **always** the right choice when no return value is needed.
 
 ---
 
-## 3. The Cases/SelectCase/ForEachCase Pattern
+## 3. Operator Chaining — All Valid Orderings
 
-### Pattern Overview
+`SelectCase` and `ForEachCase` are **independent operations**. Neither requires the other. They can appear in any order, or be omitted entirely.
 
-The pattern consists of four chained operations:
-
-| Method | Purpose | Input | Output |
-|--------|---------|-------|--------|
-| `Cases()` | Categorize items | `IAsyncEnumerable<T>` | `IAsyncEnumerable<(int, T)>` |
-| `SelectCase()` | Transform by category | `(int, T)` | `(int, T, R)` |
-| `ForEachCase()` | Side-effects | `(int, T, R)` | `(int, T, R)` |
-| `AllCases()` | Extract results | `(int, T, R)` | `IAsyncEnumerable<R>` |
-
-### Complete Example
+### Minimal pipeline — CategoryOnly
 
 ```csharp
-var results = await logs
-    .Cases(
-        log => log.Level == "ERROR",    // Category 0
-        log => log.Level == "WARNING",  // Category 1
-        log => log.Level == "INFO"      // Category 2
-        // Everything else → Category 3 (supra)
-    )
-    .SelectCase(
-        error => $"🚨 {error.Message}",     // Transform errors
-        warning => $"⚠️ {warning.Message}", // Transform warnings
-        info => $"ℹ️ {info.Message}",       // Transform info
-        other => $"📝 {other.Message}"      // Transform supra
-    )
+// Just categorize and exit
+source
+    .Cases(p => p.IsActive, p => p.IsPending)
+    .UnCase()          // Exit Cases context, get back the original T items
+    .Do();
+```
+
+### ForEachCase only (no SelectCase)
+
+```csharp
+// Accumulate per-category, no transformation needed
+source
+    .Cases(o => o.Amount > 1000, o => o.Amount <= 1000)
     .ForEachCase(
-        error => await alerter.SendAsync(error),      // Alert on errors
-        warning => await logger.WarnAsync(warning),   // Log warnings
-        info => await logger.InfoAsync(info),         // Log info
-        other => { }                                  // Ignore supra
+        high => Stats.HighCount++,
+        low  => Stats.LowCount++
     )
-    .AllCases()
+    .UnCase()          // Exit Cases context → IAsyncEnumerable<T> / SnowflakeQuery<T>
+    .Do();             // TERMINAL
+```
+
+### SelectCase only (no ForEachCase)
+
+```csharp
+// Transform per-category, no side-effects
+var results = await source
+    .Cases(o => o.IsVip, o => o.IsNew)
+    .SelectCase(
+        vip  => new Summary { Tag = "VIP",      Amount = vip.Amount * 1.1m },
+        newC => new Summary { Tag = "NEW",       Amount = newC.Amount },
+        supra=> new Summary { Tag = "STANDARD",  Amount = supra.Amount }
+    )
+    .AllCases()        // Exit Cases context → IAsyncEnumerable<Summary>
     .ToList();
 ```
 
----
-
-## 4. The Supra Category Pattern
-
-The **Supra Category Pattern** is DataLinq.NET's signature feature for intelligent, selective data processing.
-
-### How It Works
-
-When using `Cases()` to categorize data:
-
-1. Items matching the first predicate get category `0`
-2. Items matching the second predicate get category `1`
-3. Items matching the nth predicate get category `n-1`
-4. **Items not matching ANY predicate get category `n` (the "supra category")**
-
-### Selective Processing Philosophy
-
-The supra category enables a **"selective processing"** approach:
-
-- **Express Intent**: Provide selectors/actions only for categories you care about
-- **Graceful Ignoring**: Missing selectors return `default(T)`, enabling natural filtering
-- **Future-Proof**: New data patterns don't break existing processing pipelines
-- **Performance Optimized**: Single-pass processing with minimal overhead
-
-### Example: Process Only What Matters
+### SelectCase → ForEachCase (transform first, then accumulate)
 
 ```csharp
-// Process only ERROR and WARNING logs, ignore everything else
-var processedLogs = Read.Text("application.log")
-    .Cases(
-        line => line.Contains("ERROR"),   // Category 0
-        line => line.Contains("WARNING")  // Category 1
-        // DEBUG, INFO, TRACE → Category 2 (supra category)
-    )
+// Transform → accumulate the transformed value
+source
+    .Cases(o => o.IsVip, o => o.IsNew)
     .SelectCase(
-        error => $"🚨 CRITICAL: {error}",     // Handle category 0
-        warning => $"⚠️ WARNING: {warning}"   // Handle category 1
-        // No selector for category 2 → gets default(string) = null
+        vip  => new Summary { Tag = "VIP",  TotalAmount = vip.Amount * 1.1m },
+        newC => new Summary { Tag = "NEW",  TotalAmount = newC.Amount }
     )
-    .Where(result => result.newItem != null)  // Filter out ignored items
-    .AllCases();
+    .ForEachCase(
+        vip  => Revenue.Vip  += vip.TotalAmount,   // accumulate on Summary.TotalAmount
+        newC => Revenue.New  += newC.TotalAmount
+    )
+    .AllCases()        // Exit: returns general query of Summary
+    .Do();
 ```
 
-### Advanced Multi-Category Processing
+### ForEachCase → SelectCase (accumulate original, then transform)
 
 ```csharp
-var transactionAlerts = await liveTransactionStream
-    .Cases(
-        tx => tx.Amount > 10000,           // Category 0: High value
-        tx => tx.IsFlagged,                // Category 1: Suspicious
-        tx => tx.IsInternational,          // Category 2: International
-        tx => tx.Customer.IsVIP            // Category 3: VIP customer
-        // Regular transactions → Category 4 (supra category)
+// Accumulate original item metrics, then transform for output
+source
+    .Cases(o => o.IsVip, o => o.IsNew)
+    .ForEachCase(
+        vip  => Stats.VipCount++,       // accumulate on original Order
+        newC => Stats.NewCount++
     )
     .SelectCase(
-        highValue => new ComplianceReview { Transaction = highValue, Priority = Priority.High },
-        suspicious => new FraudInvestigation { Transaction = suspicious, Urgent = true },
-        international => new CurrencyConversion { Transaction = international },
-        vip => new VIPProcessing { Transaction = vip, FastTrack = true }
-        // No selector for regular transactions → they get default(object) = null
+        vip  => $"VIP-{vip.Id}",
+        newC => $"NEW-{newC.Id}",
+        supra=> $"STD-{supra.Id}"
     )
-    .Where(x => x.newItem != null)  // Remove regular transactions
+    .AllCases()        // Exit: returns general query of string
+    .Do();
+```
+
+### Full pipeline — SelectCase + ForEachCase + data needed
+
+```csharp
+var summaries = await source
+    .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
+    .SelectCase(
+        premium => new OrderSummary { Id = premium.OrderId, Label = "PREMIUM" },
+        rush    => new OrderSummary { Id = rush.OrderId,    Label = "RUSH"    },
+        supra   => new OrderSummary { Id = supra.OrderId,   Label = "STANDARD"}
+    )
     .ForEachCase(
-        compliance => await complianceSystem.ReviewAsync(compliance),
-        fraud => await fraudDetection.InvestigateAsync(fraud),
-        currency => await currencyService.ConvertAsync(currency),
-        vip => await vipProcessor.FastTrackAsync(vip)
+        premium => Revenue.Premium += premium.Amount,
+        rush    => Revenue.Rush    += rush.Amount
     )
     .AllCases()
-    .WriteCsv("special_transactions.csv");
+    .ToList();         // TERMINAL — get data back
 ```
 
 ---
 
-## 5. Multi-Type Branching
+## 4. The Exit Gate — `AllCases()` and `UnCase()`
 
-When different branches require **different return types**, DataLinq.NET provides dedicated `SelectCases` and `ForEachCases` methods (note the **plural form**) that maintain full type safety without requiring a common base type.
+`AllCases()` and `UnCase()` are the **exit gate** out of the Cases context. After calling either, you are back in the general query pipeline with the full terminal vocabulary.
 
-### The Challenge
+| Exit Method | Input | Output | Use When |
+|-------------|-------|--------|----------|
+| `AllCases()` | After `SelectCase` | General query of `R` | You want the **transformed** items |
+| `UnCase()` | After `Cases` or `ForEachCase` | General query of `T` | You want the **original** items |
 
-In standard C#, all branches of a switch expression must return the same type. But real-world processing often requires different types per branch:
+```
+                    ┌──────────────────────────┐
+    source          │     CASES CONTEXT         │     general query
+    ──────► Cases() ─► [SelectCase()] ──────────►─► AllCases() ──► .Do()
+                    │  [ForEachCase()] ──────►──────► UnCase()  ──► .Do()
+                    │                           │                ──► .Count()
+                    └──────────────────────────┘                ──► .ToList()
+                                                                ──► .WriteCsv()
+                                                                ──► await foreach
+```
+
+The exit methods are themselves **lazy** — they only repackage the query. The terminal (`.Do()`, `.Count()`, etc.) is where computation actually kicks off.
+
+---
+
+## 5. The Supra Category
+
+When a `Cases()` call has N predicates, items that match **none** of them get category index N — the **supra category** (the "catch-all").
 
 ```csharp
-// ❌ This doesn't compile - different return types
-.SelectCase(
-    error => new ErrorReport { ... },      // Returns ErrorReport
-    warning => new WarningLog { ... },     // Returns WarningLog  
-    info => new InfoMetric { ... }         // Returns InfoMetric
+source.Cases(
+    p => p.Type == "A",   // Category 0
+    p => p.Type == "B"    // Category 1
+    // Type "C", "D", etc. → Category 2 (supra)
 )
 ```
 
-### The Solution: Dedicated Multi-Type Methods
+**Supra in SelectCase — partial coverage:**
 
-DataLinq.NET solves this with `SelectCases` (plural) which returns a **flat tuple with nullable types**. Only the slot matching the executed branch contains a value:
+If `SelectCase` receives fewer selectors than categories, supra items get `default(R)` (null for reference types). Use `filterNulls: true` on `AllCases()` (the default) to transparently exclude them:
 
 ```csharp
+source
+    .Cases(p => p.IsActive, p => p.IsPending)
+    .SelectCase(
+        active  => new Result { Status = "Active",  Value = active.Score * 2 },
+        pending => new Result { Status = "Pending", Value = pending.Score }
+        // Supra (neither active nor pending) → default(Result) → filtered by AllCases
+    )
+    .AllCases(filterNulls: true)   // true is the default — supra items silently dropped
+    .ToList();
+```
 
+**Supra in ForEachCase — explicit null slot:**
+
+```csharp
+source
+    .Cases(p => p.IsVip, p => p.IsNew)
+    .ForEachCase(
+        vip  => Stats.Vip++,
+        newC => Stats.New++,
+        null   // ← explicit null: "do nothing for supra"
+    )
+    .UnCase()
+    .Do();
+```
+
+---
+
+## 6. Complete Examples
+
+### Pure accumulation, no data needed
+
+```csharp
+static long HighCount = 0;
+static long LowCount = 0;
+static void CountHigh(Order o) => HighCount++;
+static void CountLow(Order o) => LowCount++;
+
+// No data returned — .Do() is the natural terminal
+await Read.Csv<Order>("orders.csv")
+    .Cases(o => o.Amount > 1000, o => o.Amount <= 1000)
+    .ForEachCase(CountHigh, CountLow)
+    .UnCase()
+    .Do();
+
+Console.WriteLine($"High: {HighCount}, Low: {LowCount}");
+```
+
+### Transform + accumulate + stream output
+
+```csharp
+await foreach (var summary in Read.Csv<Order>("orders.csv")
+    .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
+    .SelectCase(
+        prem  => new Summary { Id = prem.OrderId,  Label = "PREMIUM" },
+        rush  => new Summary { Id = rush.OrderId,   Label = "RUSH"   },
+        supra => new Summary { Id = supra.OrderId,  Label = "STD"    }
+    )
+    .ForEachCase(
+        prem  => Revenue.Premium += prem.Amount,
+        rush  => Revenue.Rush    += rush.Amount
+    )
+    .AllCases())  // ← terminal via streaming (await foreach)
+{
+    await Sink.WriteAsync(summary);
+}
+```
+
+### Configuration-driven transformation tree
+
+Define all transformation branches declaratively, execute once:
+
+```csharp
+await dataSource
+    .Cases(
+        data => data.Type == "Customer",
+        data => data.Type == "Order",
+        data => data.Type == "Product"
+    )
+    .SelectCase(
+        customer => EnrichCustomer(customer),
+        order    => CalculateTotal(order),
+        product  => NormalizeProduct(product),
+        unknown  => LogUnknown(unknown)      // supra handler
+    )
+    .ForEachCase(
+        customer => customerDB.Save(customer),
+        order    => orderDB.Save(order),
+        product  => productDB.Save(product),
+        unknown  => errorLog.Log(unknown)
+    )
+    .AllCases()
+    .WriteCsv("processed_output.csv");  // TERMINAL
+```
+
+---
+
+## 7. Multi-Type Branching
+
+When different branches require **different return types**, use `SelectCases` (note the plural **s**). This returns a flat nullable tuple — only the slot matching the executed branch contains a value.
+
+```csharp
 await logs
     .Cases(
         log => log.Level == "ERROR",
         log => log.Level == "WARNING",
         log => log.Level == "INFO"
     )
-    // Each branch returns a DIFFERENT type - use SelectCases (with 's')
     .SelectCases<Log, ErrorReport, WarningLog, InfoMetric>(
-        error => new ErrorReport { Severity = 1, Message = error.Text },
-        warning => new WarningLog { Category = warning.Source },
-        info => new InfoMetric { MetricName = info.Key, Value = info.Count }
+        error   => new ErrorReport { Severity = 1, Message = error.Text },
+        warning => new WarningLog  { Category = warning.Source },
+        info    => new InfoMetric  { MetricName = info.Key, Value = info.Count }
     )
-    // ForEachCases receives the correct type for each branch
     .ForEachCases<Log, ErrorReport, WarningLog, InfoMetric>(
-        error => await errorDb.SaveAsync(error),
-        warning => await logDb.SaveAsync(warning),
-        info => await metricsDb.SaveAsync(info)
+        error   => errorDb.Save(error),
+        warning => logDb.Save(warning),
+        info    => metricsDb.Save(info)
     )
-    .UnCase();  // Returns to original items
+    .UnCase()    // Returns original Log items
+    .Do();
 ```
 
-### How It Works
+Multi-type branching supports **2 to 7 types** and is available on all paradigms:
 
-| Branch | Result Tuple |
-|--------|-------------|
-| Category 0 (ERROR) | `(ErrorReport, null, null)` |
-| Category 1 (WARNING) | `(null, WarningLog, null)` |
-| Category 2 (INFO) | `(null, null, InfoMetric)` |
-
-### API Variants
-
-Multi-type branching supports **2 to 7 different types**:
-
-```csharp
-// Single-type: all selectors return the same type R
-.SelectCase(selector1, selector2, selector3)  // Uses params Func<T,R>[]
-
-// Multi-type: each selector returns a DIFFERENT type
-.SelectCases<T, R1, R2>(selector1, selector2)  // Returns flat tuple (R1?, R2?)
-
-// 3 types
-.SelectCases<T, R1, R2, R3>(selector1, selector2, selector3)
-
-// Up to 7 types
-.SelectCases<T, R1, R2, R3, R4, R5, R6, R7>(...)
-```
-
-### Available Collections
-
-Multi-type branching is available for:
-- `IAsyncEnumerable<T>` (2-7 types)
-- `IEnumerable<T>` (2-7 types)
-- `ParallelQuery<T>` (2-7 types)
-- `ParallelAsyncQuery<T>` (2-7 types)
-- `SparkQuery<T>` (2-4 types) — *Premium*
+| Paradigm | Available Types | Status |
+|----------|----------------|--------|
+| `IEnumerable<T>` | 2–7 | ✅ Free |
+| `IAsyncEnumerable<T>` | 2–7 | ✅ Free |
+| `ParallelQuery<T>` | 2–7 | ✅ Free |
+| `ParallelAsyncQuery<T>` | 2–7 | ✅ Free |
+| `SparkQuery<T>` | 2–4 | 🔒 Enterprise |
+| `SnowflakeQuery<T>` | 2–4 | 🔒 Enterprise |
 
 ---
 
-## 6. API Reference
+## 8. Write Once, Process Anywhere
 
-### Cases<T>
-
-```csharp
-// Categorize items using predicates
-public static IAsyncEnumerable<(int category, T item)> Cases<T>(
-    this IAsyncEnumerable<T> items, 
-    params Func<T, bool>[] filters)
-```
-
-### SelectCase<T, R>
+The Cases pattern uses the same syntax across all DataLinq paradigms. Swap the source — the pipeline code stays identical.
 
 ```csharp
-// Transform items per category
-public static IAsyncEnumerable<(int category, T item, R newItem)> SelectCase<T, R>(
-    this IAsyncEnumerable<(int category, T item)> items, 
-    params Func<T, R>[] selectors)
+// Define processing logic ONCE — works on any paradigm
+static async Task ProcessOrders<T>(T source) where T : IAsyncEnumerable<Order>
+{
+    await source
+        .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
+        .SelectCase(
+            prem  => new Summary { Label = "PREMIUM", Amount = prem.Amount * 1.1m },
+            rush  => new Summary { Label = "RUSH",    Amount = rush.Amount },
+            supra => new Summary { Label = "STD",     Amount = supra.Amount }
+        )
+        .AllCases()
+        .WriteCsv("output.csv");
+}
+
+// DEVELOPMENT: in-memory test data
+await ProcessOrders(new[] { new Order() }.Async());
+
+// VALIDATION: CSV file
+await ProcessOrders(Read.Csv<Order>("orders.csv"));
+
+// PRODUCTION: live stream
+await ProcessOrders(liveOrderStream);
 ```
 
-### ForEachCase<T, R>
+For distributed providers (Spark, Snowflake), the source is a `SparkQuery<T>` or `SnowflakeQuery<T>` — the pipeline expression is identical, but execution happens on the cluster.
 
-```csharp
-// Execute side-effects per category
-public static IAsyncEnumerable<(int category, T item, R newItem)> ForEachCase<T, R>(
-    this IAsyncEnumerable<(int category, T item, R newItem)> items, 
-    params Func<R, Task>[] actions)
-```
+---
 
-### AllCases<T, R>
+## 9. API Reference
 
-```csharp
-// Extract transformed results
-public static IAsyncEnumerable<R> AllCases<T, R>(
-    this IAsyncEnumerable<(int category, T item, R newItem)> items)
-```
+### OSS — `IAsyncEnumerable<T>` (and `IEnumerable<T>`, `ParallelQuery`, `ParallelAsyncQuery`)
+
+| Method | Signature | Returns | Lazy? |
+|--------|-----------|---------|-------|
+| `Cases` | `Cases(params Func<T,bool>[] filters)` | `IAsyncEnumerable<(int, T)>` | ✅ Lazy |
+| `SelectCase` | `SelectCase(params Func<T,R>[] selectors)` | `IAsyncEnumerable<(int, T, R)>` | ✅ Lazy |
+| `ForEachCase` | `ForEachCase(params Action<T>[] actions)` ¹ | `IAsyncEnumerable<(int, T)>` or `<(int, T, R)>` | ✅ Lazy |
+| `AllCases` | `AllCases(bool filterNulls = true)` | `IAsyncEnumerable<R>` | ✅ Lazy |
+| `UnCase` | `UnCase()` | `IAsyncEnumerable<T>` | ✅ Lazy |
+| `Do` | `Do()` | `void` / `Task` | ⚡ **Terminal** |
+
+¹ `ForEachCase` overloads exist for both `(int, T)` (after `Cases`) and `(int, T, R)` (after `SelectCase`), enabling chaining in both directions.
+
+### Distributed providers (Spark & Snowflake)
+
+Same operator names, but:
+- Returns `SparkQuery<T>`/`SnowflakeQuery<T>` instead of `IAsyncEnumerable<T>`
+- Execution is distributed (Spark cluster / Snowflake compute)
+- `.Do()` returns `Task` (async) instead of `void`
+- See [Cases-Pattern-Providers.md](Cases-Pattern-Providers.md) for provider-specific details
+
+### Chaining Validity Matrix
+
+| Chain | Valid? | Note |
+|-------|--------|------|
+| `Cases → UnCase → terminal` | ✅ | Minimal pipeline |
+| `Cases → ForEachCase → UnCase → terminal` | ✅ | Accumulate original |
+| `Cases → SelectCase → AllCases → terminal` | ✅ | Transform only |
+| `Cases → SelectCase → ForEachCase → AllCases → terminal` | ✅ | Transform then accumulate |
+| `Cases → ForEachCase → SelectCase → AllCases → terminal` | ✅ | Accumulate original then transform |
+| `Cases → ForEachCase → AllCases → terminal` | ✅ | ForEachCase on categorized T, exit with T as R |
 
 ---
 
 ## See Also
 
-- [Stream Merging](Stream-Merging.md) — Multi-source stream processing
-- [Data Reading](DataLinq-Data-Reading-Infrastructure.md) — CSV, JSON, YAML readers
-- [LINQ-to-Spark](LINQ-to-Spark.md) — Distributed processing
+- [Cases-Pattern-Providers.md](Cases-Pattern-Providers.md) — Spark and Snowflake extensions
+- [DataLinq-SUPRA-Pattern.md](DataLinq-SUPRA-Pattern.md) — Stream pipeline philosophy
+- [LINQ-to-Spark.md](LINQ-to-Spark.md) — Distributed processing
+- [LINQ-to-Snowflake.md](LINQ-to-Snowflake.md) — Cloud warehouse integration

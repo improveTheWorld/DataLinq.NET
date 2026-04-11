@@ -48,7 +48,7 @@ If your team is stranded on old, deprecated versions of Microsoft's `dotnet/spar
 
 ## Architecture
 
-DataLinq.Spark translates C# LINQ expression trees into Spark DataFrame operations. Each LINQ operator (`.Where()`, `.Select()`, etc.) builds up a deferred expression tree that is translated and executed only when you call an action method (`.ToArray()`, `.Pull()`, `.Count()`, etc.).
+DataLinq.Spark translates C# LINQ expression trees into Spark DataFrame operations. Each LINQ operator (`.Where()`, `.Select()`, etc.) builds up a deferred expression tree that is translated and executed only when you call an **action** method (`.Do()`, `.ToArray()`, `.Pull()`, `.Count()`, `.Show()`, etc.).
 
 ### The Translation Pipeline
 
@@ -290,6 +290,9 @@ var results = (await query.Cases(
 > [!NOTE]
 > **Strict Compute vs. IO boundary:** `ForEachCase(Action<R>[])` is strictly used for firing row-level C# memory side-effects (leveraging the Delta Reflection pipeline). To physically partition and write Spark dataframes to disk, always use the dedicated `.WriteTables()`, `.WriteParquets()`, or `.WriteCsvs()` bulk-routing extensions.
 
+> [!TIP]
+> **Terminal Auto-Materialization (TAM):** Both `ForEachCase` and the bulk writing pipelines (e.g. `WriteTables`) natively enforce **Terminal Auto-Materialization**. They automatically call `DataFrame.Cache()` on your base query before initiating the multi-branch evaluation loop over the Spark Catalyst optimizer, and deterministically route memory teardown (`DataFrame.Unpersist()`) through a `finally` block constraint. This eliminates the $O(N)$ execution penalty previously associated with evaluating dynamic DAG branches on Spark.
+
 > [!NOTE]
 > **Strict Tuple Safety:** For complete pipeline traceability, `SelectCase` returns a strictly typed tuple: `(int category, T originalItem, TNew newItem)`.
 > This enterprise pattern guarantees you never lose the lineage of the original row. When working with intermediate results, access projected properties via `.newItem` (e.g., `x.newItem.Id`). To finalize the pipeline, call `.AllCases()` which automatically unwraps the tuple into a highly optimized, flat `SparkQuery<TNew>`.
@@ -327,6 +330,26 @@ Console.WriteLine($"Result: {Stats.Count} orders");
 
 > [!TIP]
 > **Why this works:** The Delta Reflection Protocol serializes your instance/static states, ships them to the executor nodes, captures the mutated deltas after the `ForEach` runs in parallel, and safely merges those primitive deltas back into your original memory context on the driver.
+
+### Lazy/Terminal Reference
+
+Every `SparkQuery<T>` method is either a **lazy transformation** (returns `SparkQuery<T>`, schedules work) or a **terminal action** (triggers distributed compute, returns a value or `void`).
+
+| Method | Kind | Description |
+|--------|------|-------------|
+| `Where`, `Select`, `OrderBy`, `Join`, `GroupBy`... | 🔵 Lazy | Build the Spark execution plan — no compute yet |
+| `ForEach(action)` | 🔵 Lazy | Registers UDF in execution plan — deferred |
+| `ForEachCase(actions...)` | 🔵 Lazy | Per-category UDF pipeline — deferred |
+| `Cases()`, `SelectCase()`, `AllCases()` | 🔵 Lazy | Categorization/projection — no compute yet |
+| `Cache()` | 🔵 Lazy | Marks for caching — `.Do()` forces materialization |
+| `Do()` | ⚡ **Terminal** | Execute plan, discard result — the natural "fire" idiom |
+| `Count()` | ⚡ **Terminal** | Execute plan, return row count |
+| `ToArray()` / `ToList()` | ⚡ **Terminal** | Execute plan, collect to driver |
+| `Pull()` | ⚡ **Terminal** | Execute plan, stream lazily to driver |
+| `Show()` | ⚡ **Terminal** | Execute plan, print to console |
+| `WriteParquet()` / `WriteCsv()` / `WriteTables()` | ⚡ **Terminal** | Execute plan, write to storage |
+
+> **`.Do()` is the correct terminal when no return value is needed.** It is equivalent to native Spark's `.count()` discarded — purpose-built for `ForEach(action).Do()` and `Cache().Do()` patterns. Using `.Count()` as a terminal when you don't need the count is misleading.
 
 ---
 

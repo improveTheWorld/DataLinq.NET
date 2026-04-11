@@ -25,6 +25,7 @@ A **C# LINQ-to-SQL translator** that enables .NET developers to write idiomatic 
    - [Merge (Upsert)](#merge-upsert)
    - [Write Options](#write-options)
    - [Cases Pattern (Server-Side Routing)](#cases-pattern-server-side-routing)
+   - [ForEachCase (Per-Category Accumulation)](#foreachcase--per-category-server-side-accumulation)
    - [Transformed Writes](#transformed-writes)
 7. [Database Operations](#database-operations)
 8. [Best Practices](#best-practices)
@@ -271,18 +272,24 @@ var overlap  = q1.Intersect(q2);     // INTERSECT
 var diff     = q1.Except(q2);        // EXCEPT
 ```
 
-### Streaming
+### Streaming — The Server/Client Boundary
 
-Use `.Pull()` to switch from server-side query building to client-side streaming. This gives you an `IAsyncEnumerable<T>` — O(1) memory, row-by-row processing:
+`SnowflakeQuery<T>` is a **server-side query plan** — every method you chain (`.Where()`, `.Select()`, `.OrderBy()`, `.Join()`, `.GroupBy()`) stays on Snowflake. No data crosses the network until you explicitly request it.
+
+**`.Pull()`** is the single, explicit point where data crosses from server to client. It returns an `IAsyncEnumerable<T>` — O(1) memory, row-by-row streaming:
 
 ```csharp
-await context.Read.Table<Order>("ORDERS")
+await foreach (var order in context.Read.Table<Order>("ORDERS")
     .Where(o => o.Amount > 100)        // Server-side (SQL WHERE)
     .Take(1000)                        // Server-side (SQL LIMIT)
-    .Pull()                            // Stream results row-by-row
-    .ForEach(o => ProcessLocally(o));  // O(1) memory — only one row loaded at a time
-
+    .Pull())                           // ← Explicit boundary: data starts flowing
+{
+    ProcessLocally(order);             // Client-side — O(1) memory
+}
 ```
+
+> [!WARNING]
+> **`Pull()` is the ONLY way to stream data to the client.** You cannot `await foreach` directly on a `SnowflakeQuery<T>` — it will not compile. This is by design: the execution boundary between server-side SQL and client-side C# must always be explicit. Use `.ToList()`, `.ToArray()`, `.First()`, `.Count()`, or `.Pull()` to cross the boundary.
 
 > **When to use `Pull()`**: Use `.Pull()` when you need to apply complex C# logic that can't be expressed as SQL nor as a server-side function.
 
@@ -316,19 +323,21 @@ var validator = new OrderValidator();
 
 ### ForEach — Server-Side Iteration
 
-Deploy server-side logic to Snowflake. Execution is deferred until materialization (`Count()`, `ToList()`, `ToArray()`):
+Deploy server-side logic to Snowflake. Execution is deferred until a terminal action (`.Do()`, `.Count()`, `.ToList()`, `.ToArray()`):
 
 ```csharp
 // Static fields are auto-synced back from Snowflake after execution
 static long _count = 0;
 static decimal _total = 0;
 
-var count = await context.Read.Table<Order>("ORDERS")
+await context.Read.Table<Order>("ORDERS")
     .ForEach(o => { _count++; _total += o.Amount; })  // Deferred — nothing runs yet
-    .Count();                                          // Triggers execution + sync
+    .Do();                                             // ✅ Natural terminal: execute, discard result
 
 Console.WriteLine($"Processed {_count} rows, total: {_total}");
 ```
+
+> **Lazy Contract:** `ForEach()` returns `SnowflakeQuery<T>` — it is a transformation, not an action. `.Do()` is the explicit action that forces execution. If you need the row count back, use `.Count()` instead.
 
 **Supported accumulator types:** `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
 
@@ -529,6 +538,72 @@ await context.Read.Table<Order>("ORDERS")
 };
 await categorizedQuery.MergeTables(targets);
 ```
+
+### ForEachCase — Per-Category Server-Side Accumulation
+
+Execute server-side stored procedures per category and sync accumulators back to the driver. This is the Snowflake equivalent of Spark's Delta Reflection pipeline applied to each case.
+
+```csharp
+static long vipCount = 0;
+static long stdCount = 0;
+
+static void ProcessVip(Order o) { vipCount++; }
+static void ProcessStd(Order o) { stdCount++; }
+
+// ForEachCase is a LAZY TRANSFORMATION — nothing runs until the terminal below
+var results = new List<Order>();
+await foreach (var order in context.Read.Table<Order>("ORDERS")
+    .Cases(
+        o => o.Amount > 10000,
+        o => o.Amount <= 10000
+    )
+    .ForEachCase(
+        ProcessVip,  // Runs server-side for category 0 rows
+        ProcessStd   // Runs server-side for category 1 rows
+    )
+    .UnCase())  // Returns SnowflakeQuery<T> — stays server-side
+{
+    results.Add(order);
+}
+// vipCount and stdCount are now synced from Snowflake!
+Console.WriteLine($"VIP: {vipCount}, Standard: {stdCount}");
+```
+
+When combined with `SelectCase`, `.AllCases()` returns a `SnowflakeQuery<R>` — staying fully server-side — and `.Do()` is the natural terminal:
+
+```csharp
+static long premiumRevenue = 0;
+static long rushRevenue = 0;
+
+static void AccumPremium(OrderSummary s) { premiumRevenue += (long)s.TotalAmount; }
+static void AccumRush(OrderSummary s) { rushRevenue += (long)s.TotalAmount; }
+
+// AllCases() stays server-side (returns SnowflakeQuery<R>)
+// Do() triggers the stored procedures and syncs accumulators
+await context.Read.Table<Order>("ORDERS")
+    .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
+    .SelectCase(
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 1.1m },
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount },
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 0.9m }
+    )
+    .ForEachCase(
+        AccumPremium,
+        AccumRush,
+        null  // No accumulation for supra category
+    )
+    .AllCases()  // ✅ Returns SnowflakeQuery<OrderSummary> — no data moves
+    .Do();       // ✅ Triggers execution + sync-back
+```
+
+> **Server-Side Guarantee:** `AllCases()` generates SQL (`SELECT <R cols> FROM (...) WHERE _category < N`) — no rows cross the network until you call `.ToList()`, `.Pull()`, or similar. Chaining `.Where()` or `.Count()` after `.AllCases()` runs on Snowflake, not on the client.
+
+> **Compute vs IO boundary:** `ForEachCase(Action<T>[])` is for row-level C# side-effects with accumulator sync-back. For bulk data routing, always use the dedicated `.WriteTables()` or `.MergeTables()` extensions.
+
+**Synchronization Rules (same as ForEach):**
+- Static fields of primitive types (`int`, `long`, `double`, `decimal`, `bool`, `string`) are synced back.
+- Only additive accumulation (`+=`, `++`) is correct — conditional assignments produce wrong results.
+- Each category generates a separate stored procedure targeting rows where `_category = i`.
 
 ### Transformed Writes
 

@@ -102,8 +102,6 @@ await foreach (var order in Read.Json<Order>("orders.json", opts))
 // Multi-document YAML (--- separated)
 await foreach (var config in Read.Yaml<AppConfig>("configs.yaml"))
     Apply(config);
-```
-
 ---
 
 ### Text (Line-by-Line)
@@ -199,22 +197,6 @@ All methods are lazy (deferred) unless marked as terminal.
 | `BuildString(separator, before, after)` | Build formatted string | `string` |
 
 → Full 4-paradigm matrix: [Extension-Methods-API-Reference.md](Extension-Methods-API-Reference.md)
-
----
-
-## 4. String Extensions
-
-Extension methods on `string` in the `DataLinq` namespace.
-
-| Method | Description | Returns |
-|--------|-------------|---------|
-| `IsNullOrEmpty()` | Check if null or empty | `bool` |
-| `IsNullOrWhiteSpace()` | Check if null/whitespace | `bool` |
-| `IsBetween(start, end)` | Check start/end delimiters | `bool` |
-| `StartsWith(prefixes)` | Check multiple prefixes | `bool` |
-| `ContainsAny(tokens)` | Check for any token | `bool` |
-| `ReplaceAt(index, length, text)` | Replace at position | `string` |
-| `LastIdx()` | Get last valid index | `int` |
 
 ---
 
