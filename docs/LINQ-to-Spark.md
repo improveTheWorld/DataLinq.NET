@@ -225,6 +225,37 @@ var outerJoin = orders.Join(customers, o => o.CustomerId, c => c.Id,
 - `Join(..., joinType: "right")` - RIGHT OUTER JOIN
 - `Join(..., joinType: "outer")` - FULL OUTER JOIN
 
+**Composite join keys** — join on multiple columns simultaneously:
+
+```csharp
+// Both sides must declare the same key arity and member order
+orders.Join(details,
+    o => new { o.OrderId, o.Type },   // 2-column key
+    d => new { d.OrderId, d.Type },   // must match count
+    (o, d) => new { o.OrderId, d.Quantity })
+```
+
+**Computed join keys** — join on transformed values:
+
+```csharp
+// String normalization
+orders.Join(customers,
+    o => o.CustomerCode.ToUpper(),
+    c => c.Code.ToUpper(),
+    (o, c) => new { o.OrderId, c.Name })
+
+// Math normalization
+orders.Join(products,
+    o => Math.Round(o.Price),
+    p => Math.Round(p.ListPrice),
+    (o, p) => new { o.OrderId, p.Sku })
+```
+
+> [!NOTE]
+> **Composite key arity is enforced at compile time by the C# type system.** Both key selectors must produce the same `TKey` type. If the types don't match, the compiler rejects it. A runtime `ArgumentException` guard exists as a safety net for type-erased (`object`) usage only.
+>
+> Any expression supported in `.Where()` is also supported as a computed join key.
+
 ---
 
 ## Advanced Features
@@ -769,19 +800,15 @@ The following features are not currently supported due to architectural constrai
 
 | Feature | Issue | Workaround |
 |---------|-------|------------|
-| **Composite Join Keys** | `Join(..., x => new { x.A, x.B }, ...)` not yet supported | Join on single key, add `Where` clause for additional conditions |
-| **Computed Join Keys** | `Join(..., x => x.Name.ToUpper(), ...)` not yet supported | Apply transformation in a `Select` before joining |
-
-> [!NOTE]
-> Composite and computed join keys are planned for v1.2.2. See the implementation plan for details.
+| **Nested property join keys** | `Join(..., o => o.Address.City, ...)` not supported | Flatten nested properties with `Select` before joining |
 
 > [!TIP]
-> For composite keys, you can often work around by joining on one key and filtering:
+> For nested properties, flatten before joining:
 > ```csharp
-> // Instead of: orderQuery.Join(details, o => new { o.Id, o.Type }, d => new { d.OrderId, d.Type }, ...)
+> // Instead of: orders.Join(customers, o => o.Address.City, c => c.City, ...)
 > // Use:
-> orderQuery.Join(details, o => o.Id, d => d.OrderId, (o, d) => new { Order = o, Detail = d })
->           .Where(x => x.Order.Type == x.Detail.Type);
+> orders.Select(o => new { o.Id, City = o.Address.City })
+>       .Join(customers, o => o.City, c => c.City, ...)
 > ```
 
 ---
