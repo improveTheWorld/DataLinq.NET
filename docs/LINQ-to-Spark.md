@@ -77,6 +77,7 @@ graph TD
 | **Filtering** | `Where(x => x.Id > 1)` | `.Filter(col("id") > 1)` |
 | **Projections** | `Select(x => new { x.Name })` | `.Select(col("name"))` |
 | **Ordering** | `OrderBy`, `OrderByDescending`, `ThenBy` | `.Sort(...)` |
+| **Pagination** | `OrderBy(...).Skip(n).Take(m)` — compile-time safe | `Window.RowNumber()` |
 | **Grouping** | `GroupBy(x => x.Dept)` | `.GroupBy("dept")` |
 | **Joins** | `Join(other, ...)` | `.Join(other, ...)` |
 | **Aggregations** | `Sum`, `Count`, `Max`, `Min` | `Functions.Sum()`, `Count()`... |
@@ -267,35 +268,127 @@ orders.Select(o => new { o.Id, Prices = o.Items.Select(i => i.Price * i.Qty) })
 
 ### Cases Pattern (Conditional Routing)
 
-Process multiple conditions in a single pass using the `Cases` API:
+Process multiple conditions in a single distributed pass using the `Cases` API. All branching happens on the cluster — no data crosses the network until a terminal is called.
+
+**The full Cases pipeline has three progressive levels of complexity:**
+
+#### Level 1 — Categorize and Write
+
+Route rows to different physical destinations based on conditions:
 
 ```csharp
-// 1. Categorize
-var results = (await query.Cases(
-    x => x.Amount > 1000,   // Premium (category 0)
-    x => x.Amount > 500     // Standard (category 1)
-    // Default: Basic        (category 2)
-)
-// 2. Transform per category (SelectCase preserves the category enum/index)
-.SelectCase(
-    premium  => new { Id = premium.Id, Tag = "VIP" },
-    standard => new { Id = standard.Id, Tag = "Regular" },
-    basic    => new { Id = basic.Id, Tag = "Economy" }
-)
-// 3. Dispatch (Write each category to a separate table)
-// v1.2.0: Supports overwrite flags directly on categorized bulk writes
-.WriteTables("VIP_ORDERS", "REG_ORDERS", "ECO_ORDERS", overwrite: true));
+// Note: overwrite comes first (positional), table names follow (params)
+await query
+    .Cases(
+        x => x.Amount > 1000,   // Category 0: Premium
+        x => x.Amount > 500     // Category 1: Standard
+        // Default: Category 2 (everything else)
+    )
+    .SelectCase(
+        premium  => new { Id = premium.Id, Tag = "VIP" },
+        standard => new { Id = standard.Id, Tag = "Regular" },
+        basic    => new { Id = basic.Id, Tag = "Economy" }
+    )
+    .WriteTables(overwrite: true, "VIP_ORDERS", "REG_ORDERS", "ECO_ORDERS");
+    //            ^ required first  ^ then the target table names (params)
+```
+
+`WriteParquets` and `WriteCsvs` follow the same signature when writing to paths:
+
+```csharp
+await query.Cases(x => x.Amount > 1000, x => x.Amount > 500)
+    .SelectCase(vip => vip, std => std, eco => eco)
+    .WriteParquets(overwrite: true, "/output/vip", "/output/std", "/output/eco");
+
+await query.Cases(x => x.Amount > 1000, x => x.Amount > 500)
+    .SelectCase(vip => vip, std => std, eco => eco)
+    .WriteCsvs(overwrite: true, header: true, "/output/vip", "/output/std", "/output/eco");
+```
+
+#### Level 2 — Per-Category Accumulation (`ForEachCase`)
+
+`ForEachCase` uses the **Delta Reflection Protocol** to synchronize distributed row-level side-effects (static field accumulation) back to the driver. It is lazy — no compute runs until a terminal is called.
+
+**Exit gate 1 — `UnCase()`: return to a flat query**
+
+`UnCase()` discards the category metadata and returns a `SparkQuery<T>` representing the original data. Any subsequent terminal fires the accumulated delta sync-back:
+
+```csharp
+static int vipCount = 0;
+static int stdCount = 0;
+
+static void CountVip(Order o) { vipCount++; }
+static void CountStd(Order o) { stdCount++; }
+
+var count = query
+    .Cases(o => o.Amount > 1000, o => o.Amount > 500)
+    .ForEachCase(CountVip, CountStd)   // Lazy: registers per-category UDFs
+    .UnCase()                          // Returns SparkQuery<Order> — no compute yet
+    .Count();                          // ⚡ Terminal: executes + fires delta sync
+
+Console.WriteLine($"Processed {count} rows, VIP: {vipCount}, Standard: {stdCount}");
+```
+
+**Exit gate 2 — `AllCases()`: return the projected type**
+
+When `SelectCase` is in the pipeline, `AllCases()` returns `SparkQuery<R>` — the projected result type. Use `.Do()` as the terminal when no return value is needed:
+
+```csharp
+static long premiumRevenue = 0;
+static long stdRevenue = 0;
+
+static void AccumPremium(OrderSummary s) { premiumRevenue += (long)s.Total; }
+static void AccumStd(OrderSummary s) { stdRevenue += (long)s.Total; }
+
+query
+    .Cases(o => o.Amount > 1000, o => o.Amount > 500)
+    .SelectCase(
+        vip => new OrderSummary { Id = vip.Id, Total = vip.Amount * 1.1 },
+        std => new OrderSummary { Id = std.Id, Total = std.Amount },
+        eco => new OrderSummary { Id = eco.Id, Total = eco.Amount * 0.9 }
+    )
+    .ForEachCase(AccumPremium, AccumStd, null)  // null = no action for category 2
+    .AllCases()   // Returns SparkQuery<OrderSummary> — lazy
+    .Do();        // ⚡ Terminal: execute + sync-back
+
+Console.WriteLine($"Premium: {premiumRevenue}, Standard: {stdRevenue}");
+```
+
+**`Do()` directly on the 3-tuple** — When you don't need an exit query, call `.Do()` immediately after `ForEachCase`:
+
+```csharp
+query
+    .Cases(o => o.Amount > 1000, o => o.Amount > 500)
+    .SelectCase(vip => vip, std => std, eco => eco)
+    .ForEachCase(CountVip, CountStd, null)
+    .Do();  // ⚡ Fires deltasync without materializing data
+```
+
+#### Level 3 — Compose Accumulation with Physical Writes
+
+`ForEachCase` and write terminals (`WriteTables`, `WriteParquets`, `WriteCsvs`) can be **composed**: ForEachCase registers the side-effect pipeline; the write terminal performs the physical write **and** triggers the delta sync-back:
+
+```csharp
+// Both: count rows per category AND write them to Parquet paths
+await query
+    .Cases(o => o.Amount > 1000, o => o.Amount > 500)
+    .SelectCase(vip => vip, std => std, eco => eco)
+    .ForEachCase(CountVip, CountStd, null)         // Register side-effects
+    .WriteParquets(overwrite: true,                // ⚡ Terminal: writes + fires sync
+        "/output/vip", "/output/std", "/output/eco");
+
+// After the write: vipCount and stdCount are both populated
+Console.WriteLine($"Written VIP: {vipCount}, Standard: {stdCount}");
 ```
 
 > [!NOTE]
-> **Strict Compute vs. IO boundary:** `ForEachCase(Action<R>[])` is strictly used for firing row-level C# memory side-effects (leveraging the Delta Reflection pipeline). To physically partition and write Spark dataframes to disk, always use the dedicated `.WriteTables()`, `.WriteParquets()`, or `.WriteCsvs()` bulk-routing extensions.
+> **`ForEachCase` vs. write terminals — complementary, not exclusive:** `ForEachCase` registers C# memory side-effects (delta accumulation). Write terminals (`WriteTables`, `WriteParquets`, `WriteCsvs`, `MergeTables`) perform physical I/O. They serve different purposes and freely compose — a pipeline that contains both does both.
 
 > [!TIP]
-> **Terminal Auto-Materialization (TAM):** Both `ForEachCase` and the bulk writing pipelines (e.g. `WriteTables`) natively enforce **Terminal Auto-Materialization**. They automatically call `DataFrame.Cache()` on your base query before initiating the multi-branch evaluation loop over the Spark Catalyst optimizer, and deterministically route memory teardown (`DataFrame.Unpersist()`) through a `finally` block constraint. This eliminates the $O(N)$ execution penalty previously associated with evaluating dynamic DAG branches on Spark.
+> **Terminal Auto-Materialization (TAM):** Both `ForEachCase` and the bulk writing pipelines natively enforce **Terminal Auto-Materialization**. They automatically call `DataFrame.Cache()` before initiating the multi-branch evaluation loop over the Spark Catalyst optimizer, and deterministically route memory teardown (`DataFrame.Unpersist()`) through a `finally` block. This eliminates the O(N) execution penalty from evaluating dynamic DAG branches on Spark.
 
 > [!NOTE]
-> **Strict Tuple Safety:** For complete pipeline traceability, `SelectCase` returns a strictly typed tuple: `(int category, T originalItem, TNew newItem)`.
-> This enterprise pattern guarantees you never lose the lineage of the original row. When working with intermediate results, access projected properties via `.newItem` (e.g., `x.newItem.Id`). To finalize the pipeline, call `.AllCases()` which automatically unwraps the tuple into a highly optimized, flat `SparkQuery<TNew>`.
+> **Tuple structure for intermediate access:** `SelectCase` returns a strictly typed 3-tuple: `(int Item1, T Item2, R Item3)` where `Item1` is the category index, `Item2` is the original row, and `Item3` is the projected result. Use `Item3` to access the projection (e.g., `x.Item3.Id`). To finalize the pipeline, call `.AllCases()` which unwraps to `SparkQuery<R>`, or `.UnCase()` which recovers `SparkQuery<T>`.
 
 ### ForEach (Row Processing)
 
@@ -336,18 +429,21 @@ Console.WriteLine($"Result: {Stats.Count} orders");
 Every `SparkQuery<T>` method is either a **lazy transformation** (returns `SparkQuery<T>`, schedules work) or a **terminal action** (triggers distributed compute, returns a value or `void`).
 
 | Method | Kind | Description |
-|--------|------|-------------|
+|--------|------|--------------|
 | `Where`, `Select`, `OrderBy`, `Join`, `GroupBy`... | 🔵 Lazy | Build the Spark execution plan — no compute yet |
 | `ForEach(action)` | 🔵 Lazy | Registers UDF in execution plan — deferred |
 | `ForEachCase(actions...)` | 🔵 Lazy | Per-category UDF pipeline — deferred |
-| `Cases()`, `SelectCase()`, `AllCases()` | 🔵 Lazy | Categorization/projection — no compute yet |
+| `Cases()`, `SelectCase()` | 🔵 Lazy | Categorization/projection — no compute yet |
+| `AllCases()` | 🔵 Lazy | Returns `SparkQuery<R>` (projected type) — no data moved |
+| `UnCase()` | 🔵 Lazy | Returns `SparkQuery<T>` (original type, category stripped) — no data moved |
 | `Cache()` | 🔵 Lazy | Marks for caching — `.Do()` forces materialization |
 | `Do()` | ⚡ **Terminal** | Execute plan, discard result — the natural "fire" idiom |
 | `Count()` | ⚡ **Terminal** | Execute plan, return row count |
 | `ToArray()` / `ToList()` | ⚡ **Terminal** | Execute plan, collect to driver |
 | `Pull()` | ⚡ **Terminal** | Execute plan, stream lazily to driver |
 | `Show()` | ⚡ **Terminal** | Execute plan, print to console |
-| `WriteParquet()` / `WriteCsv()` / `WriteTables()` | ⚡ **Terminal** | Execute plan, write to storage |
+| `WriteParquet()` / `WriteCsv()` / `WriteTable()` | ⚡ **Terminal** | Execute plan, write to storage |
+| `WriteTables()` / `WriteParquets()` / `WriteCsvs()` / `MergeTables()` | ⚡ **Terminal** | Cases pattern terminal: write each category to a separate location + fire `PostExecutionSync` (ForEachCase delta sync-back) |
 
 > **`.Do()` is the correct terminal when no return value is needed.** It is equivalent to native Spark's `.count()` discarded — purpose-built for `ForEach(action).Do()` and `Cache().Do()` patterns. Using `.Count()` as a terminal when you don't need the count is misleading.
 
@@ -627,14 +723,29 @@ DataLinq guarantees replayable, fault-tolerant execution plans. To enforce this 
 ### 5. Important Limitations
 
 > [!IMPORTANT]
-> **Skip() requires OrderBy()**: The `Skip()` method throws if called without a prior `OrderBy()` because Spark internally uses window functions (`RowNumber()`) to implement pagination.
+> **Skip() and ThenBy() require OrderBy() — enforced at compile time.**
+> `OrderBy()` / `OrderByDescending()` return `OrderedSparkQuery<T>`, a subtype of `SparkQuery<T>`. Only `OrderedSparkQuery<T>` has `Skip()`, `ThenBy()`, and `ThenByDescending()`. If you forget `OrderBy()`, your code **won't compile** — no runtime surprise.
+>
+> This mirrors .NET's own `IOrderedEnumerable<T>` pattern.
 
 ```csharp
-// ❌ Throws InvalidOperationException
+// ❌ Does not compile — SparkQuery<T> has no Skip()
 query.Skip(10).Take(5);
 
-// ✅ Works
+// ✅ Compiles — OrderBy() returns OrderedSparkQuery<T> which has Skip()
 query.OrderBy(x => x.Id).Skip(10).Take(5);
+
+// ✅ Multi-level sort with pagination
+query.OrderBy(x => x.Date)
+     .ThenByDescending(x => x.Amount)
+     .Skip(20)
+     .Take(10);
+
+// ⚠️ Note: Where() after OrderBy() returns SparkQuery<T>, dropping ordered context.
+// Filter BEFORE ordering, not after:
+query.Where(x => x.Active)          // filter first
+     .OrderBy(x => x.Id)            // then sort
+     .Skip(10).Take(5);             // then paginate
 ```
 
 > [!NOTE]
@@ -658,7 +769,11 @@ The following features are not currently supported due to architectural constrai
 
 | Feature | Issue | Workaround |
 |---------|-------|------------|
-| **Composite Join Keys** | `Join(..., x => new { x.A, x.B }, ...)` fails | Join on single key, add `Where` clause for additional conditions |
+| **Composite Join Keys** | `Join(..., x => new { x.A, x.B }, ...)` not yet supported | Join on single key, add `Where` clause for additional conditions |
+| **Computed Join Keys** | `Join(..., x => x.Name.ToUpper(), ...)` not yet supported | Apply transformation in a `Select` before joining |
+
+> [!NOTE]
+> Composite and computed join keys are planned for v1.2.2. See the implementation plan for details.
 
 > [!TIP]
 > For composite keys, you can often work around by joining on one key and filtering:
