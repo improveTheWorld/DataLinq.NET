@@ -4,7 +4,7 @@
 
 ## Highlights
 
-DataLinq.Spark v1.3.0 delivers **composite join key support**, **compile-time query safety**, **Where predicate delta synchronization**, and a critical **pipeline stability fix** — plus a streamlined API surface with deprecated utilities removed.
+DataLinq.Spark v1.3.0 delivers **composite join key support**, **compile-time query safety**, **Where predicate delta synchronization**, **automatic memory management** for Cases pipelines, and a critical **pipeline stability fix** — plus a streamlined API surface with deprecated utilities removed.
 
 ---
 
@@ -68,6 +68,21 @@ var valid = orders
 
 Under the hood, a **composite UDF** returns both the boolean predicate result and field deltas in a single pass (`"1|field:+5"` or `"0|field:+3"`). A `postExecutionSync` callback collects deltas from all evaluated rows (both passed and failed) and applies them to the original instance.
 
+### Automatic Memory Management for Cases Writes
+
+All Cases terminal operations (`WriteTables`, `WriteParquets`, `WriteCsvs`, `MergeTables`, `ForEachCase`) now implement **Transparent Access Memory (TAM)** — the categorized DataFrame is automatically cached before multi-category writes and deterministically released afterward:
+
+```csharp
+// Before v1.3.0: each category re-scanned the full lineage (N+1 problem)
+// After v1.3.0: single scan, cached, auto-released
+await query.Cases(o => o.Amount > 1000)
+    .SelectCase(vip => new { vip.Id }, std => new { std.Id })
+    .WriteTables("VIP_ORDERS", "STD_ORDERS");
+// ← Memory automatically freed here, even if an exception occurs
+```
+
+For pipelines with complex upstream transformations (joins, UDFs, multi-stage filters), this eliminates redundant re-computation and reduces executor memory pressure.
+
 ---
 
 ## Bug Fixes
@@ -104,17 +119,18 @@ query.ForEach(processor.Process).Where(o => o.Active).Do();  // ✅ Works
 
 ## Quality
 
-- **159 unit tests** + **175 audit batch tests** — zero failures
+- **744 tests passing** (189 unit + 285 integration + 270 adversarial audit) — zero failures
 - Composite join key tests cover: single-prop, multi-prop, computed, bool, DateTime, nested, mixed
 - `OrderedSparkQuery<T>` contract verified at compile time (not just runtime)
 - PostExecutionSync forwarding verified for all 15 chain methods
+- TAM cache/unpersist lifecycle verified across all 5 Cases terminal methods
 
 ---
 
 ## Documentation
 
 - **[LINQ-to-Spark Guide](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Spark.md)** — Updated: Join examples with composite keys, OrderedSparkQuery section, Where Delta Reflection section, terminal reference table
-- **[Cases Pattern](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Cases-Pattern.md)** — Updated chaining validity matrix
+- **[Cases Pattern](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Cases-Pattern.md)** — TAM memory management documented, chaining validity matrix updated
 
 ---
 
