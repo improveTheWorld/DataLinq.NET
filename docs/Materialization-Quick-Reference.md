@@ -150,5 +150,5 @@ Before using `Read.Csv<T>()`, `Read.Json<T>()`, etc.:
 - [DataLinq-Data-Reading-Infrastructure.md](DataLinq-Data-Reading-Infrastructure.md) - Reader architecture overview
 - [ObjectMaterializer.md](ObjectMaterializer.md) - Full API reference
 - [ObjectMaterializer-Limitations.md](ObjectMaterializer-Limitations.md) - Known limitations and v2.x roadmap
-- [LINQ-to-Snowflake-Capabilities.md](LINQ-to-Snowflake-Capabilities.md) - Snowflake query features
+- [LINQ-to-Snowflake-Capabilities.md](LINQ-to-Snowflake-Capabilities.md) - Expression translation reference
 - [LINQ-to-Spark.md](LINQ-to-Spark.md) - Spark query features

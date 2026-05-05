@@ -588,8 +588,8 @@ Every `SnowflakeQuery<T>` method is either a **lazy transformation** (returns `S
 | `First()` / `FirstOrDefault()` | ⚡ **Terminal** | Execute plan, return single element |
 | `Single()` / `SingleOrDefault()` | ⚡ **Terminal** | Execute plan, verify exactly one result |
 | `Sum()` / `Average()` / `Min()` / `Max()` | ⚡ **Terminal** | Execute plan, return scalar aggregate |
-| `Any()` / `All()` | ⚡ **Terminal** | Execute plan, return boolean |
-| `Pull()` | ☁️ Lazy | Stream as `IAsyncEnumerable<T>` — execution deferred until enumerated |
+| `Any()` | ⚡ **Terminal** | Execute plan, return boolean |
+| `Pull()` | ⚡ **Terminal** | Execute plan, stream as `IAsyncEnumerable<T>` — O(1) memory |
 | `Show()` | ⚡ **Terminal** | Execute plan, print to console |
 | `WriteTable()` / `MergeTable()` | ⚡ **Terminal** | Execute plan, write to Snowflake table |
 | `WriteTables()` / `MergeTables()` | ⚡ **Terminal** | Cases terminal: write each category to a separate table |

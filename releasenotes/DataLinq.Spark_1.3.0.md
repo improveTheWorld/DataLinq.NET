@@ -1,10 +1,10 @@
 # DataLinq.Spark v1.3.0 Release Notes
 
-**Release Date**: April 2026
+**Release Date**: May 2026
 
 ## Highlights
 
-DataLinq.Spark v1.3.0 delivers **composite join key support**, **compile-time query safety**, **Where predicate delta synchronization**, **automatic memory management** for Cases pipelines, and a critical **pipeline stability fix** — plus a streamlined API surface with deprecated utilities removed.
+DataLinq.Spark v1.3.0 brings **richer LINQ joins**, **compile-time query safety**, **field synchronization in Where predicates**, **decimal support for ForEach sync**, **automatic memory management** for Cases pipelines, and improved **error visibility** — plus cleaner console output and a streamlined API surface.
 
 ---
 
@@ -32,17 +32,17 @@ var result = orders
     .ToList();
 ```
 
-Previously restricted to single-property keys, v1.3.0 lifts this limitation — any expression that works in `Where` or `Select` now works in `Join` key selectors, including anonymous types, ternary operators, and Auto-UDF methods.
+Any expression that works in `Where` or `Select` — anonymous types, ternary operators, Auto-UDF methods — now works in `Join` key selectors too.
 
 ### OrderedSparkQuery — Compile-Time Ordering Enforcement
 
-`OrderBy` and `OrderByDescending` now return `OrderedSparkQuery<T>`, a distinct type that enforces correct API usage at compile time:
+`OrderBy` and `OrderByDescending` now return `OrderedSparkQuery<T>`, a distinct type that catches ordering mistakes at compile time:
 
 ```csharp
 // ✅ Compiles — Skip requires ordering
 var page = query.OrderBy(o => o.Date).Skip(100).Take(50);
 
-// ❌ Won't compile — Skip is not available on unordered SparkQuery<T>
+// ❌ Won't compile — Skip is not available on unordered queries
 var bad = query.Skip(100);  // CS1061: 'SparkQuery<T>' does not contain 'Skip'
 
 // ✅ ThenBy chaining — only available after OrderBy
@@ -51,11 +51,11 @@ var sorted = query
     .ThenByDescending(o => o.Amount);
 ```
 
-This prevents a category of runtime errors where Spark would silently return unpredictable results from unordered `Skip` operations.
+This prevents unpredictable results from unordered `Skip` operations.
 
-### Where with Delta Reflection (Instance Field Sync in Predicates)
+### Where with Field Synchronization
 
-Instance methods used in `Where` predicates can now **write to fields and synchronize changes back** to the driver, using the same Delta Reflection Protocol as `ForEach`:
+Instance methods used in `Where` predicates can now **write to fields and synchronize changes back** to the driver — the same capability already available in `ForEach`:
 
 ```csharp
 var validator = new OrderValidator();
@@ -66,40 +66,53 @@ var valid = orders
 // validator.ProcessedCount and validator.TotalAmount are now synchronized!
 ```
 
-Under the hood, a **composite UDF** returns both the boolean predicate result and field deltas in a single pass (`"1|field:+5"` or `"0|field:+3"`). A `postExecutionSync` callback collects deltas from all evaluated rows (both passed and failed) and applies them to the original instance.
+Field updates are collected from **all evaluated rows** (both matched and filtered), so your counters reflect the full dataset, not just the filtered results.
 
 ### Automatic Memory Management for Cases Writes
 
-All Cases terminal operations (`WriteTables`, `WriteParquets`, `WriteCsvs`, `MergeTables`, `ForEachCase`) now implement **Transparent Access Memory (TAM)** — the categorized DataFrame is automatically cached before multi-category writes and deterministically released afterward:
+All Cases terminal operations (`WriteTables`, `WriteParquets`, `WriteCsvs`, `MergeTables`, `ForEachCase`) now **automatically cache and release** the categorized data:
 
 ```csharp
-// Before v1.3.0: each category re-scanned the full lineage (N+1 problem)
-// After v1.3.0: single scan, cached, auto-released
 await query.Cases(o => o.Amount > 1000)
     .SelectCase(vip => new { vip.Id }, std => new { std.Id })
     .WriteTables("VIP_ORDERS", "STD_ORDERS");
-// ← Memory automatically freed here, even if an exception occurs
+// Memory automatically freed — even if an exception occurs
 ```
 
-For pipelines with complex upstream transformations (joins, UDFs, multi-stage filters), this eliminates redundant re-computation and reduces executor memory pressure.
+Previously, each category re-scanned the full upstream pipeline. v1.3.0 scans once and caches, eliminating redundant re-computation in complex pipelines.
+
+### Decimal Field Synchronization
+
+`ForEach`, `ForEachCase`, and `Where` now synchronize `decimal` fields. Previously, `decimal` mutations were silently lost:
+
+```csharp
+decimal totalRevenue = 0m;
+query.ForEach(o => totalRevenue += o.Amount).Do();
+Console.WriteLine(totalRevenue);  // ✅ Correct — was silently 0 in v1.2.0
+```
+
+**Supported sync types**: `int`, `long`, `double`, `float`, `decimal`, `string`
+
+> **Tip**: For boolean-like tracking, use `int` with 0/1 values.
 
 ---
 
-## Bug Fixes
+## Improvements
 
-### PostExecutionSync Forwarding (Critical Stability Fix)
+### Pipeline Stability
 
-Previously, 15 query chain methods silently **dropped** the `_postExecutionSync` callback when constructing new query instances. This meant that `ForEach` delta sync and `Where` delta sync would fail silently in chained pipelines:
+`ForEach` and `Where` field synchronization now works correctly through **all query chain methods**. Previously, chaining operations like `.Where()`, `.Select()`, or `.Join()` after `.ForEach()` could silently drop the sync — fields would stay at their initial values.
 
 ```csharp
-// Before v1.3.0: ForEach sync LOST after .Where() — fields never synced
+// Now works correctly in all chain positions
 query.ForEach(processor.Process).Where(o => o.Active).Do();
-
-// After v1.3.0: sync correctly propagated through entire chain
-query.ForEach(processor.Process).Where(o => o.Active).Do();  // ✅ Works
 ```
 
-**Fixed in**: `Where`, `Select`, `Take`, `Distinct`, `DropDuplicates`, `Join`, `Union`, `Intersect`, `Except`, `Cache`, `Persist`, `Repartition`, `Coalesce`, `OrderBy`, `OrderByDescending`.
+### Better Error Visibility
+
+- **UDF errors** from Spark workers are now surfaced as exceptions instead of being silently swallowed
+- **Sync errors** in Where predicates are now thrown as `InvalidOperationException` so your code can detect and handle them
+- **Clean console output** — no more diagnostic trace messages in production
 
 ---
 
@@ -107,33 +120,24 @@ query.ForEach(processor.Process).Where(o => o.Active).Do();  // ✅ Works
 
 ### Removed
 
-| Method | Reason | Replacement |
-|--------|--------|-------------|
-| `Profile()` | Triggered query execution as a hidden side effect | Use `Explain()` for query plans, manual `Stopwatch` for timing |
-| `Debug()` | Redundant with `Spy()` | Use `Spy("label")` for transparent pipeline inspection |
-| `ShowComparison()` | Trivial utility with no discoverability | Call `Show()` on each query directly |
+| Method | Replacement |
+|--------|-------------|
+| `Profile()` | `Explain()` for query plans, `Stopwatch` for timing |
+| `Debug()` | `Spy("label")` |
+| `ShowComparison()` | Call `Show()` on each query directly |
 
-> These methods were undocumented internal utilities. If your code references them, the replacements above are direct substitutions.
+> These were undocumented utilities. The replacements above are direct substitutions.
 
 ---
 
 ## Quality
 
-- **744 tests passing** (189 unit + 285 integration + 270 adversarial audit) — zero failures
-- Composite join key tests cover: single-prop, multi-prop, computed, bool, DateTime, nested, mixed
-- `OrderedSparkQuery<T>` contract verified at compile time (not just runtime)
-- PostExecutionSync forwarding verified for all 15 chain methods
-- TAM cache/unpersist lifecycle verified across all 5 Cases terminal methods
+- **791 tests** (208 unit + 313 integration + 270 adversarial audit) — zero failures
+- All features verified across the full 15-stage release pipeline
 
 ---
 
 ## Documentation
 
-- **[LINQ-to-Spark Guide](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Spark.md)** — Updated: Join examples with composite keys, OrderedSparkQuery section, Where Delta Reflection section, terminal reference table
-- **[Cases Pattern](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Cases-Pattern.md)** — TAM memory management documented, chaining validity matrix updated
-
----
-
-## Full Changelog
-
-[`DataLinq.Spark_1.2.0...DataLinq.Spark_1.3.0`](https://github.com/improveTheWorld/DataLinq.NET/compare/DataLinq.Spark_1.2.0...DataLinq.Spark_1.3.0)
+- **[LINQ-to-Spark Guide](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Spark.md)** — Updated with composite join examples, OrderedSparkQuery, Where field sync, decimal sync type list
+- **[Cases Pattern](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Cases-Pattern.md)** — Updated with automatic memory management

@@ -6,26 +6,26 @@ A **C# LINQ-to-SQL translator** that enables .NET developers to write idiomatic 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Quick Start](#quick-start)
-3. [Core Query Operations](#core-query-operations)
-   - [Filtering & Projection](#filtering--projection)
+2. [Architecture](#architecture)
+3. [Key Features](#key-features)
+4. [Usage Guide](#usage-guide)
+   - [Connecting with the Context API](#connecting-with-the-context-api-recommended)
    - [Grouping and Aggregation](#grouping-and-aggregation)
    - [Joins](#joins)
-4. [Advanced Query Features](#advanced-query-features)
+5. [Advanced Features](#advanced-features)
    - [Window Functions](#window-functions-analytics)
    - [Set Operations](#set-operations)
+   - [Streaming](#streaming)
+   - [Server-Side Functions](#server-side-functions)
+   - [ForEach](#foreach--server-side-iteration)
    - [Semi-Structured Data (VARIANT)](#semi-structured-data-variant)
-5. [Server-Side Execution](#server-side-execution)
-   - [Server-Side Functions (Auto-UDF)](#server-side-functions)
-   - [ForEach — Server-Side Iteration](#foreach--server-side-iteration)
-   - [ForEachCase — Per-Category Accumulation](#foreachcase--per-category-server-side-accumulation)
-   - [The Server/Client Boundary — Pull()](#the-serverclient-boundary--pull)
 6. [Write Operations](#write-operations)
    - [Write Patterns](#write-patterns)
    - [Insert (Bulk Load)](#insert-bulk-load)
    - [Merge (Upsert)](#merge-upsert)
    - [Write Options](#write-options)
    - [Cases Pattern (Server-Side Routing)](#cases-pattern-server-side-routing)
+   - [ForEachCase (Per-Category Accumulation)](#foreachcase--per-category-server-side-accumulation)
    - [Transformed Writes](#transformed-writes)
 7. [Database Operations](#database-operations)
 8. [Best Practices](#best-practices)
@@ -43,7 +43,9 @@ The LINQ-to-Snowflake provider bridges the gap between .NET applications and Sno
 *   ✅ **Unified API**: Same LINQ patterns as `SparkQuery` and `IEnumerable`.
 *   ✅ **Server-Side Execution**: Filters, joins, and aggregations run on Snowflake, not your client.
 
-### Architecture
+---
+
+## Architecture
 
 The provider follows the standard `IQueryable` pattern:
 
@@ -64,7 +66,28 @@ graph TD
 
 ---
 
-## Quick Start
+## Key Features
+
+| Feature | Description | SQL Equivalent |
+|---------|-------------|----------------|
+| **Filtering** | `Where(x => x.Id > 1)` | `WHERE id > 1` |
+| **Projections** | `Select(x => new { x.Name })` | `SELECT name` |
+| **Ordering** | `OrderBy(x => x.Date)` | `ORDER BY date` |
+| **Pagination** | `Take(10).Skip(5)` | `LIMIT 10 OFFSET 5` (`Skip` requires `OrderBy`) |
+| **Grouping** | `GroupBy(x => x.Dept)` | `GROUP BY dept` |
+| **Joins** | `Join(other, ...)` | `INNER JOIN` |
+| **Aggregations** | `Sum`, `Count`, `Max`, `Min` | `SUM()`, `COUNT()`... |
+| **DateTime Props** | `x.Date.Year`, `x.Date.Month` | `YEAR(date)`, `MONTH(date)` |
+| **Math Functions** | `Math.Abs(x)`, `Math.Round(x)` | `ABS(x)`, `ROUND(x)` |
+| **String Props** | `x.Name.Length`, `x.Name.IndexOf(s)` | `LENGTH(name)`, `POSITION(s, name)` |
+| **Single Element** | `Single()`, `SingleOrDefault()` | `LIMIT 2` (verify count) |
+| **SelectMany** | `SelectMany(o => o.Items)` | `LATERAL FLATTEN(items)` |
+| **GroupJoin** | `GroupJoin(other, ...)` | `LEFT JOIN + GROUP BY` |
+| **Terminal Aggregates** | `Sum()`, `Average()`, `Min()`, `Max()` | `SELECT SUM/AVG/MIN/MAX(col)` |
+
+---
+
+## Usage Guide
 
 ### Required Namespace
 
@@ -72,7 +95,7 @@ graph TD
 using DataLinq.SnowflakeQuery;
 ```
 
-### Connecting
+### Connecting with the Context API (Recommended)
 
 DataLinq supports both standard password and RSA Key-Pair authentication.
 
@@ -117,20 +140,6 @@ await using var context = Snowflake.Connect(
 );
 ```
 
-### First Query
-
-```csharp
-var orders = context.Read.Table<Order>("ORDERS");
-
-// Filter + project + materialize — all server-side until ToList()
-var results = await orders
-    .Where(o => o.Amount > 100)
-    .Select(o => new { o.CustomerName, o.Amount })
-    .OrderBy(o => o.Amount)
-    .Take(50)
-    .ToList();
-```
-
 ### Compile-Time Sorting Enforcement
 
 To guarantee deterministic pagination and valid SQL generation, ordering operations are enforced natively by the C# type system:
@@ -140,27 +149,6 @@ To guarantee deterministic pagination and valid SQL generation, ordering operati
 
 > [!WARNING]
 > If you attempt to call `.Skip()` or `.ThenBy()` directly on an unordered `SnowflakeQuery<T>`, your C# compiler will instantly fail the build. You must explicitly chain `.OrderBy()` first.
-
----
-
-## Core Query Operations
-
-### Filtering & Projection
-
-| Feature | Description | SQL Equivalent |
-|---------|-------------|----------------|
-| **Filtering** | `Where(x => x.Id > 1)` | `WHERE id > 1` |
-| **Projections** | `Select(x => new { x.Name })` | `SELECT name` |
-| **Ordering** | `OrderBy(x => x.Date)` | `ORDER BY date` |
-| **Pagination** | `Take(10).Skip(5)` | `LIMIT 10 OFFSET 5` (`Skip` requires `OrderBy`) |
-| **Distinct** | `.Select(o => o.Category).Distinct()` | `SELECT DISTINCT` |
-| **Single Element** | `Single()`, `SingleOrDefault()` | `LIMIT 2` (verify count) |
-| **SelectMany** | `SelectMany(o => o.Items)` | `LATERAL FLATTEN(items)` |
-| **DateTime Props** | `x.Date.Year`, `x.Date.Month` | `YEAR(date)`, `MONTH(date)` |
-| **Math Functions** | `Math.Abs(x)`, `Math.Round(x)` | `ABS(x)`, `ROUND(x)` |
-| **String Props** | `x.Name.Length`, `x.Name.IndexOf(s)` | `LENGTH(name)`, `POSITION(s, name)` |
-
-> For the complete C#→SQL expression mapping, see [Expression Translation Reference](LINQ-to-Snowflake-Capabilities.md).
 
 ### Grouping and Aggregation
 
@@ -180,10 +168,9 @@ var stats = orders
 
 > **Note:** `GroupBy` supports both single-key and composite-key grouping (e.g., `GroupBy(o => new { o.Category, o.Region })`).
 
-> [!TIP]
-> **Performance:** Apply `.Where()` filters *before* `.GroupBy()` to reduce the rows Snowflake must scan and group. Predicates in the `WHERE` clause enable micro-partition pruning before the aggregation stage. Note: predicate overloads like `Count(x => x.IsActive)` are pure syntactic sugar — they call `.Where(pred).Count()` internally, producing identical SQL and identical query plans.
+### Terminal Aggregates
 
-**Terminal Aggregates** — compute a single aggregate value directly, no `GroupBy` needed:
+Compute a single aggregate value directly — no `GroupBy` needed:
 
 ```csharp
 // Single round-trip to Snowflake each
@@ -197,6 +184,7 @@ var activeTotal = await orders.Where(o => o.Year == 2024).Sum(o => o.Amount);
 ```
 
 **Overloads:** `Sum` accepts `decimal`, `double`, `long`, `int` selectors. `Average` always returns `double`. `Min`/`Max` are generic — work with any comparable type.
+
 
 ### Joins
 
@@ -257,9 +245,6 @@ var result = orders.Join(
 
 > **Note:** Composite and computed keys can be combined — `new { o.Name.ToUpper(), o.Region }` works.
 
-> [!NOTE]
-> **Composite key arity is enforced at compile time by the C# type system.** Both key selectors must produce the same `TKey` type. If the anonymous type shapes don't match (different member names or counts), the C# compiler rejects the call.
-
 ### GroupJoin
 
 Group elements from another query by a matching key (LEFT JOIN + GROUP BY):
@@ -279,7 +264,7 @@ var customerOrders = customers.GroupJoin(
 
 ---
 
-## Advanced Query Features
+## Advanced Features
 
 ### Window Functions (Analytics)
 
@@ -321,6 +306,75 @@ var distinct = q1.UnionDistinct(q2); // UNION
 var overlap  = q1.Intersect(q2);     // INTERSECT
 var diff     = q1.Except(q2);        // EXCEPT
 ```
+
+### Streaming — The Server/Client Boundary
+
+`SnowflakeQuery<T>` is a **server-side query plan** — every method you chain (`.Where()`, `.Select()`, `.OrderBy()`, `.Join()`, `.GroupBy()`) stays on Snowflake. No data crosses the network until you explicitly request it.
+
+**`.Pull()`** is the single, explicit point where data crosses from server to client. It returns an `IAsyncEnumerable<T>` — O(1) memory, row-by-row streaming:
+
+```csharp
+await foreach (var order in context.Read.Table<Order>("ORDERS")
+    .Where(o => o.Amount > 100)        // Server-side (SQL WHERE)
+    .Take(1000)                        // Server-side (SQL LIMIT)
+    .Pull())                           // ← Explicit boundary: data starts flowing
+{
+    ProcessLocally(order);             // Client-side — O(1) memory
+}
+```
+
+> [!WARNING]
+> **`Pull()` is the ONLY way to stream data to the client.** You cannot `await foreach` directly on a `SnowflakeQuery<T>` — it will not compile. This is by design: the execution boundary between server-side SQL and client-side C# must always be explicit. Use `.ToList()`, `.ToArray()`, `.First()`, `.Count()`, or `.Pull()` to cross the boundary.
+
+> **When to use `Pull()`**: Use `.Pull()` when you need to apply complex C# logic that can't be expressed as SQL nor as a server-side function.
+
+### Server-Side Functions
+
+Custom C# methods in `Where()` and `Select()` are automatically deployed as **server-side functions** on Snowflake — your C# runs directly in the warehouse:
+
+```csharp
+// Static method — auto-translated
+.Where(o => o.IsActive && Helpers.IsHighValue(o.Amount))
+// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
+
+// Entity-parameter method — auto-decomposed
+static bool CustomValidator(Order o) => o.Amount > 1000 && o.Status == "Active";
+.Where(o => CustomValidator(o))
+// SQL: WHERE auto_class_customvalidator(amount, status)
+// Properties accessed inside the method become individual function parameters
+
+// Instance method — also supported
+var validator = new OrderValidator();
+.Where(o => validator.IsValid(o.Amount))
+// SQL: WHERE auto_ordervalidator_isvalid(amount)
+
+// Mixed expressions decompose naturally
+.Where(o => o.IsActive && IsHighValue(o.Amount))
+// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
+// ↑ native SQL                ↑ server-side function auto-generated
+```
+
+> ⚠️ **Performance & billing**: Server-side functions in `Where()` prevent Snowflake predicate pushdown. Prefer native operators when possible. The build-time analyzer (`DFSN004`) warns automatically.
+
+### ForEach — Server-Side Iteration
+
+Deploy server-side logic to Snowflake. Execution is deferred until a terminal action (`.Do()`, `.Count()`, `.ToList()`, `.ToArray()`):
+
+```csharp
+// Static fields are auto-synced back from Snowflake after execution
+static long _count = 0;
+static decimal _total = 0;
+
+await context.Read.Table<Order>("ORDERS")
+    .ForEach(o => { _count++; _total += o.Amount; })  // Deferred — nothing runs yet
+    .Do();                                             // ✅ Natural terminal: execute, discard result
+
+Console.WriteLine($"Processed {_count} rows, total: {_total}");
+```
+
+> **Lazy Contract:** `ForEach()` returns `SnowflakeQuery<T>` — it is a transformation, not an action. `.Do()` is the explicit action that forces execution. If you need the row count back, use `.Count()` instead.
+
+**Supported accumulator types:** `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
 
 ### Semi-Structured Data (VARIANT)
 
@@ -428,197 +482,6 @@ var allItems = orders.SelectMany(o => o.Items);
 
 ---
 
-## Server-Side Execution
-
-This section covers features where your C# code is translated to Java and runs **inside Snowflake's JVM** — not on the client. Understanding this boundary is essential for correct usage and cost management.
-
-### Server-Side Functions
-
-Custom C# methods in `Where()` and `Select()` are automatically deployed as **server-side functions** on Snowflake — your C# runs directly in the warehouse:
-
-```csharp
-// Static method — auto-translated
-.Where(o => o.IsActive && Helpers.IsHighValue(o.Amount))
-// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
-
-// Entity-parameter method — auto-decomposed
-static bool CustomValidator(Order o) => o.Amount > 1000 && o.Status == "Active";
-.Where(o => CustomValidator(o))
-// SQL: WHERE auto_class_customvalidator(amount, status)
-// Properties accessed inside the method become individual function parameters
-
-// Instance method — also supported
-var validator = new OrderValidator();
-.Where(o => validator.IsValid(o.Amount))
-// SQL: WHERE auto_ordervalidator_isvalid(amount)
-
-// Mixed expressions decompose naturally
-.Where(o => o.IsActive && IsHighValue(o.Amount))
-// SQL: WHERE is_active AND auto_helpers_ishighvalue(amount)
-// ↑ native SQL                ↑ server-side function auto-generated
-```
-
-> ⚠️ **Performance & billing**: Server-side functions in `Where()` prevent Snowflake predicate pushdown. Prefer native operators when possible. The build-time analyzer (`DFSN004`) warns automatically. If a method uses a construct with no Java equivalent (e.g., `foreach`, `new List<T>`, `is` pattern), the `DFSN008` error diagnostic fires at build time — the method cannot be deployed.
-
-**Build-Time Diagnostics:**
-
-| Rule | Severity | Description |
-|------|----------|---------|
-| **DFSN004** | ⚠️ Warning | Custom method in `Where()` — prevents predicate pushdown |
-| **DFSN005** | ⚠️ Warning | Instance method — supported, but carries closure overhead |
-| **DFSN006** | ⚠️ Warning | Multiple server-side functions in same `Where` — compounding performance impact |
-| **DFSN007** | ℹ️ Info | Method will execute server-side on Snowflake — not locally in your .NET process |
-| **DFSN008** | ❌ Error | Method uses a construct with no Snowflake equivalent — cannot be deployed |
-
-### ForEach — Server-Side Iteration
-
-Deploy server-side logic to Snowflake as an anonymous stored procedure. Execution is deferred until a terminal action (`.Do()`, `.Count()`, `.ToList()`, `.ToArray()`):
-
-```csharp
-// Static fields are auto-synced back from Snowflake after execution
-static long _count = 0;
-static decimal _total = 0;
-
-await context.Read.Table<Order>("ORDERS")
-    .ForEach(o => { _count++; _total += o.Amount; })  // Deferred — nothing runs yet
-    .Do();                                             // ✅ Natural terminal: execute, discard result
-
-Console.WriteLine($"Processed {_count} rows, total: {_total}");
-```
-
-> **Lazy Contract:** `ForEach()` returns `SnowflakeQuery<T>` — it is a transformation, not an action. `.Do()` is the explicit action that forces execution. If you need the row count back, use `.Count()` instead.
-
-**Synchronization Rules:**
-
-| Rule | Description |
-|------|-------------|
-| **Call `.Do()`** | `ForEach` is lazy. No execution (or sync-back) occurs until you call a terminal (`.Do()`, `.Count()`, `.ToList()`). |
-| **Primitives Only** | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, and `string` fields are synchronized. |
-| **Additive Merge Only** | Only `+=`, `++`, and `-=` patterns produce correct results. Conditional assignments like `if (x > max) max = x` will produce incorrect values because the Snowflake SP runs in isolation. Use server-side aggregations (`Max()`, `Min()`) for these operations. |
-| **Collections Fail** | `List<T>`, `Dictionary`, arrays, etc. are **NOT** synchronized back. Use numeric counters instead. |
-| **String Concatenation** | String `+=` works but appended order is **non-deterministic** for ForEachCase (each SP runs independently). |
-
-> [!NOTE]
-> **Performance characteristic:** Each `.ForEach()` invocation generates a `CREATE PROCEDURE` → `CALL` → `DROP PROCEDURE` cycle on Snowflake. The Snowflake JVM incurs ~5–7 seconds of compilation latency per procedure call. This is inherent to Snowflake's stored procedure infrastructure, not DataLinq overhead. ForEach is designed for **batch/ETL workloads** — do not use it in latency-sensitive request paths.
-
-### ForEachCase — Per-Category Server-Side Accumulation
-
-Execute server-side stored procedures per category and sync accumulators back to the driver. This is the Snowflake equivalent of Spark's Delta Reflection pipeline applied to each case.
-
-```csharp
-static long vipCount = 0;
-static long stdCount = 0;
-
-static void ProcessVip(Order o) { vipCount++; }
-static void ProcessStd(Order o) { stdCount++; }
-
-// ForEachCase is a LAZY TRANSFORMATION — nothing runs until the terminal below
-var results = new List<Order>();
-await foreach (var order in context.Read.Table<Order>("ORDERS")
-    .Cases(
-        o => o.Amount > 10000,
-        o => o.Amount <= 10000
-    )
-    .ForEachCase(
-        ProcessVip,  // Runs server-side for category 0 rows
-        ProcessStd   // Runs server-side for category 1 rows
-    )
-    .UnCase()    // Returns SnowflakeQuery<T> — stays server-side (lazy)
-    .Pull())     // ← Pull() is required to stream SnowflakeQuery<T> to the client
-{
-    results.Add(order);
-}
-// vipCount and stdCount are now synced from Snowflake!
-Console.WriteLine($"VIP: {vipCount}, Standard: {stdCount}");
-```
-
-When combined with `SelectCase`, `.AllCases()` returns a `SnowflakeQuery<R>` — staying fully server-side — and `.Do()` is the natural terminal:
-
-```csharp
-static long premiumRevenue = 0;
-static long rushRevenue = 0;
-
-static void AccumPremium(OrderSummary s) { premiumRevenue += (long)s.TotalAmount; }
-static void AccumRush(OrderSummary s) { rushRevenue += (long)s.TotalAmount; }
-
-// AllCases() stays server-side (returns SnowflakeQuery<R>)
-// Do() triggers the stored procedures and syncs accumulators
-await context.Read.Table<Order>("ORDERS")
-    .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
-    .SelectCase(
-        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 1.1m },
-        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount },
-        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 0.9m }
-    )
-    .ForEachCase(
-        AccumPremium,
-        AccumRush,
-        null  // No accumulation for supra category
-    )
-    .AllCases()  // ✅ Returns SnowflakeQuery<OrderSummary> — no data moves
-    .Do();       // ✅ Triggers execution + sync-back
-```
-
-> **Server-Side Guarantee:** `AllCases()` generates SQL (`SELECT <R cols> FROM (...) WHERE _category < N`) — no rows cross the network until you call `.ToList()`, `.Pull()`, or similar. Chaining `.Where()` or `.Count()` after `.AllCases()` runs on Snowflake, not on the client.
-
-> **Compute vs IO boundary:** `ForEachCase(Action<T>[])` registers row-level C# side-effects with accumulator sync-back. Write terminals (`WriteTables`, `MergeTables`) route data to physical destinations. They serve **different purposes and freely compose** — placing `ForEachCase` before a write terminal gives you both side-effect accumulation and physical writes in a single pass. The write terminal fires `PostExecutionSync` at completion, which triggers all registered ForEachCase sync-backs.
-
-**Synchronization Rules (same as ForEach):**
-- Static fields of primitive types (`int`, `long`, `double`, `decimal`, `bool`, `string`) are synced back.
-- Only additive accumulation (`+=`, `++`) is correct — conditional assignments produce wrong results.
-- Each category generates a separate stored procedure targeting rows where `_category = i`.
-
-> For the full Cases philosophy, lazy execution contract, chaining rules, and API reference, see [Cases Pattern](Cases-Pattern.md).
-
-### Lazy/Terminal Reference
-
-Every `SnowflakeQuery<T>` method is either a **lazy transformation** (returns `SnowflakeQuery<T>`, schedules work on Snowflake) or a **terminal action** (executes SQL, returns a value or streams data).
-
-| Method | Kind | Description |
-|--------|------|--------------|
-| `Where`, `Select`, `OrderBy`, `Join`, `GroupBy`... | ☁️ Lazy | Build the SQL execution plan — no compute yet |
-| `ForEach(action)` | ☁️ Lazy | Registers stored procedure — deferred |
-| `ForEachCase(actions...)` | ☁️ Lazy | Per-category SP pipeline — deferred |
-| `Cases()`, `SelectCase()` | ☁️ Lazy | Categorization/projection — no compute yet |
-| `AllCases()` | ☁️ Lazy | Returns `SnowflakeQuery<R>` (projected type) — no data moved |
-| `UnCase()` | ☁️ Lazy | Returns `SnowflakeQuery<T>` (original type, category stripped) — no data moved |
-| `Do()` | ⚡ **Terminal** | Execute plan, discard result — the natural "fire" idiom |
-| `Count()` | ⚡ **Terminal** | Execute plan, return row count |
-| `ToList()` / `ToArray()` | ⚡ **Terminal** | Execute plan, materialize to memory |
-| `First()` / `FirstOrDefault()` | ⚡ **Terminal** | Execute plan, return single element |
-| `Single()` / `SingleOrDefault()` | ⚡ **Terminal** | Execute plan, verify exactly one result |
-| `Sum()` / `Average()` / `Min()` / `Max()` | ⚡ **Terminal** | Execute plan, return scalar aggregate |
-| `Any()` / `All()` | ⚡ **Terminal** | Execute plan, return boolean |
-| `Pull()` | ☁️ Lazy | Stream as `IAsyncEnumerable<T>` — execution deferred until enumerated |
-| `Show()` | ⚡ **Terminal** | Execute plan, print to console |
-| `WriteTable()` / `MergeTable()` | ⚡ **Terminal** | Execute plan, write to Snowflake table |
-| `WriteTables()` / `MergeTables()` | ⚡ **Terminal** | Cases terminal: write each category to a separate table |
-
-> **`.Do()` is the correct terminal when no return value is needed.** It is purpose-built for `ForEach(action).Do()` patterns. Using `.Count()` as a terminal when you don't need the count is misleading.
-
-### The Server/Client Boundary — Pull()
-
-`SnowflakeQuery<T>` is a **server-side query plan** — every method you chain (`.Where()`, `.Select()`, `.OrderBy()`, `.Join()`, `.GroupBy()`, `.ForEach()`) stays on Snowflake. No data crosses the network until you explicitly request it.
-
-**`.Pull()`** is the single, explicit point where data crosses from server to client. It returns an `IAsyncEnumerable<T>` — O(1) memory, row-by-row streaming:
-
-```csharp
-await foreach (var order in context.Read.Table<Order>("ORDERS")
-    .Where(o => o.Amount > 100)        // Server-side (SQL WHERE)
-    .Take(1000)                        // Server-side (SQL LIMIT)
-    .Pull())                           // ← Explicit boundary: data starts flowing
-{
-    ProcessLocally(order);             // Client-side — O(1) memory
-}
-```
-
-> [!WARNING]
-> **`Pull()` is the ONLY way to stream data to the client.** You cannot `await foreach` directly on a `SnowflakeQuery<T>` — it will not compile. This is by design: the execution boundary between server-side SQL and client-side C# must always be explicit. Use `.ToList()`, `.ToArray()`, `.First()`, `.Count()`, or `.Pull()` to cross the boundary.
-
-> **When to use `Pull()`**: Use `.Pull()` when you need to apply complex C# logic that can't be expressed as SQL nor as a server-side function.
-
----
-
 ## Write Operations
 
 > Write data back to Snowflake using the unified Write API.
@@ -630,7 +493,7 @@ await foreach (var order in context.Read.Table<Order>("ORDERS")
 DataLinq supports two write patterns with different context requirements:
 
 | Source | Target | Context Required? | Example |
-|--------|--------|-------------------|---------|
+|--------|--------|-------------------|--------|
 | **Query** (`SnowflakeQuery`) | Table | ❌ No (inherited) | `query.WriteTable("TABLE")` |
 | **Local Data** (`IEnumerable`) | Table | ✅ Yes | `list.WriteTable(context, "TABLE")` |
 
@@ -711,10 +574,72 @@ await context.Read.Table<Order>("ORDERS")
 await categorizedQuery.MergeTables(targets);
 ```
 
-> 🚀 **Performance Feature: Terminal Auto-Materialization (TAM)**
-> To prevent the N+1 execution query penalty that arises from dynamic column branching, `WriteTables()` and `MergeTables()` conditionally wrap the base query in a temporary materialized table cache (`CREATE TEMPORARY TABLE`) when routing to multiple targets, so Snowflake performs the heavy scan exactly once. For `ForEachCase`, TAM is unconditionally injected into the deferred `PostExecutionSync` delegate at registration time. In both cases, the cache is automatically dropped upon exit.
+### ForEachCase — Per-Category Server-Side Accumulation
 
-> For the full Cases philosophy, chaining rules, Supra category, SelectCase/ForEachCase interaction, and multi-type branching, see [Cases Pattern](Cases-Pattern.md).
+Execute server-side stored procedures per category and sync accumulators back to the driver. This is the Snowflake equivalent of Spark's Delta Reflection pipeline applied to each case.
+
+```csharp
+static long vipCount = 0;
+static long stdCount = 0;
+
+static void ProcessVip(Order o) { vipCount++; }
+static void ProcessStd(Order o) { stdCount++; }
+
+// ForEachCase is a LAZY TRANSFORMATION — nothing runs until the terminal below
+var results = new List<Order>();
+await foreach (var order in context.Read.Table<Order>("ORDERS")
+    .Cases(
+        o => o.Amount > 10000,
+        o => o.Amount <= 10000
+    )
+    .ForEachCase(
+        ProcessVip,  // Runs server-side for category 0 rows
+        ProcessStd   // Runs server-side for category 1 rows
+    )
+    .UnCase()    // Returns SnowflakeQuery<T> — stays server-side (lazy)
+    .Pull())     // ← Pull() is required to stream SnowflakeQuery<T> to the client
+{
+    results.Add(order);
+}
+// vipCount and stdCount are now synced from Snowflake!
+Console.WriteLine($"VIP: {vipCount}, Standard: {stdCount}");
+```
+
+When combined with `SelectCase`, `.AllCases()` returns a `SnowflakeQuery<R>` — staying fully server-side — and `.Do()` is the natural terminal:
+
+```csharp
+static long premiumRevenue = 0;
+static long rushRevenue = 0;
+
+static void AccumPremium(OrderSummary s) { premiumRevenue += (long)s.TotalAmount; }
+static void AccumRush(OrderSummary s) { rushRevenue += (long)s.TotalAmount; }
+
+// AllCases() stays server-side (returns SnowflakeQuery<R>)
+// Do() triggers the stored procedures and syncs accumulators
+await context.Read.Table<Order>("ORDERS")
+    .Cases(o => o.Amount > 10000, o => o.Status == "Rush")
+    .SelectCase(
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 1.1m },
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount },
+        o => new OrderSummary { Id = o.OrderId, TotalAmount = o.Amount * 0.9m }
+    )
+    .ForEachCase(
+        AccumPremium,
+        AccumRush,
+        null  // No accumulation for supra category
+    )
+    .AllCases()  // ✅ Returns SnowflakeQuery<OrderSummary> — no data moves
+    .Do();       // ✅ Triggers execution + sync-back
+```
+
+> **Server-Side Guarantee:** `AllCases()` generates SQL (`SELECT <R cols> FROM (...) WHERE _category < N`) — no rows cross the network until you call `.ToList()`, `.Pull()`, or similar. Chaining `.Where()` or `.Count()` after `.AllCases()` runs on Snowflake, not on the client.
+
+> **Compute vs IO boundary:** `ForEachCase(Action<T>[])` registers row-level C# side-effects with accumulator sync-back. Write terminals (`WriteTables`, `MergeTables`) route data to physical destinations. They serve **different purposes and freely compose** — placing `ForEachCase` before a write terminal gives you both side-effect accumulation and physical writes in a single pass. The write terminal fires `PostExecutionSync` at completion, which triggers all registered ForEachCase sync-backs.
+
+**Synchronization Rules (same as ForEach):**
+- Static fields of primitive types (`int`, `long`, `double`, `decimal`, `bool`, `string`) are synced back.
+- Only additive accumulation (`+=`, `++`) is correct — conditional assignments produce wrong results.
+- Each category generates a separate stored procedure targeting rows where `_category = i`.
 
 ### Transformed Writes
 
@@ -796,7 +721,7 @@ int dropped = context
 
 3.  **Column Naming — Write C#, Forget SQL Naming**:
 
-    DataLinq automatically maps C# PascalCase property names to Snowflake snake_case column names via `NamingConventions.ToSnakeCase()` / `ToPascalCase()`. Just write idiomatic C# — the translation is transparent:
+    DataLinq automatically maps C# PascalCase property names to Snowflake snake_case column names. Just write idiomatic C# — the translation is transparent:
 
     ```csharp
     public class Order
@@ -812,37 +737,17 @@ int dropped = context
     orders.Select(o => new { o.OrderId, o.CustomerName })  // SELECT order_id, customer_name
     ```
 
-    When reading results back, column names are automatically converted back to PascalCase via `ToPascalCase()` for object hydration. Small naming mismatches (≤2 characters) are tolerated via ObjectMaterializer's fuzzy matching. Acronyms are handled correctly: `IPAddress` → `ip_address` → `IP_ADDRESS` → `IpAddress`.
+    When reading results back, column names are automatically converted back to PascalCase for object hydration. Small naming mismatches (≤2 characters) are tolerated via ObjectMaterializer's fuzzy matching. Acronyms are handled correctly: `IPAddress` → `ip_address` → `IP_ADDRESS` → `IpAddress`.
 
 4.  **Debugging**: Use `.Spy()` or `.Show()` to inspect intermediate results during development.
     ```csharp
     query.Where(...).Spy("AfterFilter").OrderBy(...)
     ```
 
-5.  **Pull() vs ToList() — Memory**: Use `.Pull()` when processing rows one-by-one (O(1) memory). Use `.ToList()` only when you genuinely need all rows in memory simultaneously. For large result sets, `.Pull()` is always safer.
-
-6.  **ForEach is for ETL, not OLTP**: Each `.ForEach()` call creates and drops a stored procedure on Snowflake, incurring ~5–7s of JVM compilation overhead. Use ForEach for batch processing pipelines, not latency-sensitive API endpoints.
-
-7.  **UDF Pushdown Warning**: Custom methods in `.Where()` prevent Snowflake micro-partition pruning. For high-cardinality filtering on large tables, prefer native LINQ operators (`>`, `==`, `.Contains()`). The Roslyn analyzer `DFSN004` warns at build time.
-
-8.  **Connection Lifecycle**: Always use `await using` to ensure the connection is properly disposed. DataLinq deploys Auto-UDFs at connect time using SHA256 fingerprint deduplication — unchanged UDFs are never redeployed.
-
-9.  **Debugging Workflow**: When a query returns unexpected results, use this progression:
-    ```csharp
-    // Step 1: Inspect generated SQL
-    Console.WriteLine(query.ToSql());
-    
-    // Step 2: Check intermediate pipeline stages
-    query.Where(...).Spy("after-filter").OrderBy(...).Spy("after-sort");
-    
-    // Step 3: View Snowflake's execution plan
-    query.Explain();
-    ```
-
 ---
 
 ## See Also
 
-- [Expression Translation Reference](LINQ-to-Snowflake-Capabilities.md) — C#→SQL mapping, window functions, VARIANT translation, design philosophy
-- [Cases Pattern](Cases-Pattern.md) — Cases/SelectCase philosophy, chaining rules, API reference
+- [LINQ-to-Snowflake Capabilities & Limitations](LINQ-to-Snowflake-Capabilities.md) — Detailed feature support matrix
 - [LINQ-to-Spark](LINQ-to-Spark.md) — SparkQuery provider documentation
+- [Cases Pattern](Cases-Pattern.md) — Cases/SelectCase pattern

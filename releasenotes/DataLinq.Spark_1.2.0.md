@@ -89,9 +89,3 @@ Previously, GroupBy keys were restricted to direct property access. v1.2.0 lifts
 
 - **[LINQ-to-Spark Guide](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/LINQ-to-Spark.md)** — Updated Cases pattern examples, GroupBy best practices
 - **[Platform-Specific Divergences](https://github.com/improveTheWorld/DataLinq.NET/blob/main/docs/Platform-Specific-Divergences.md)** — Updated with v1.2.0 unification status
-
----
-
-## Full Changelog
-
-[`DataLinq.Spark_1.1.0...DataLinq.Spark_1.2.0`](https://github.com/improveTheWorld/DataLinq.NET/compare/DataLinq.Spark_1.1.0...DataLinq.Spark_1.2.0)

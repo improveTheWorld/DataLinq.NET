@@ -400,7 +400,17 @@ await ProcessOrders(Read.Csv<Order>("orders.csv"));
 await ProcessOrders(liveOrderStream);
 ```
 
-For distributed providers (Spark, Snowflake), the source is a `SparkQuery<T>` or `SnowflakeQuery<T>` — the pipeline expression is identical, but execution happens on the cluster.
+For distributed providers (Spark, Snowflake), the source is a `SparkQuery<T>` or `SnowflakeQuery<T>` — the pipeline expression is identical, but execution happens on the cluster. The framework guarantees structural API harmony across all providers:
+
+| Feature | DataLinq.NET (OSS) | DataLinq.Spark | DataLinq.Snowflake |
+|---------|------------------|----------------|--------------------|
+| Engine | Local CPU | Distributed JVM | Cloud Warehouse |
+| Branch Limit | 7 Types | 4 Types | 4 Types |
+| `.Do()` Terminal | `void`/`Task` | `void` (Sync) | `Task` (Async) |
+| Side-Effect Model | Shared Memory | Delta Reflection | Stored Procedure Sync |
+| Network Egress | N/A | High bandwidth | High cost (avoid implicit pulls) |
+
+> **Harmony Contract:** You can write a pipeline locally using `IEnumerable<T>`, validate it, and confidently swap the source to `SparkQuery<T>` or `SnowflakeQuery<T>`. The only required changes will be `await` keywords if shifting to an async I/O provider.
 
 ---
 
@@ -419,13 +429,13 @@ For distributed providers (Spark, Snowflake), the source is a `SparkQuery<T>` or
 
 ¹ `ForEachCase` overloads exist for both `(int, T)` (after `Cases`) and `(int, T, R)` (after `SelectCase`), enabling chaining in both directions.
 
-### Distributed providers (Spark & Snowflake)
+### Distributed Providers (Spark & Snowflake)
 
 Same operator names, but:
 - Returns `SparkQuery<T>`/`SnowflakeQuery<T>` instead of `IAsyncEnumerable<T>`
 - Execution is distributed (Spark cluster / Snowflake compute)
-- `.Do()` returns `Task` (async) instead of `void`
-- See [Cases-Pattern-Providers.md](Cases-Pattern-Providers.md) for provider-specific details
+- `.Do()` returns `Task` (async on Snowflake) or `void` (sync on Spark)
+- See [LINQ-to-Spark](LINQ-to-Spark.md) and [LINQ-to-Snowflake](LINQ-to-Snowflake.md) for provider-specific details (Delta Reflection, Terminal Auto-Materialization, Stored Procedure sync-back, etc.)
 
 ### Chaining Validity Matrix
 
@@ -442,7 +452,6 @@ Same operator names, but:
 
 ## See Also
 
-- [Cases-Pattern-Providers.md](Cases-Pattern-Providers.md) — Spark and Snowflake extensions
 - [DataLinq-SUPRA-Pattern.md](DataLinq-SUPRA-Pattern.md) — Stream pipeline philosophy
-- [LINQ-to-Spark.md](LINQ-to-Spark.md) — Distributed processing
-- [LINQ-to-Snowflake.md](LINQ-to-Snowflake.md) — Cloud warehouse integration
+- [LINQ-to-Spark.md](LINQ-to-Spark.md) — Distributed processing (Delta Reflection, TAM)
+- [LINQ-to-Snowflake.md](LINQ-to-Snowflake.md) — Cloud warehouse integration (Stored Procedure sync, TAM)

@@ -160,7 +160,7 @@ To guarantee deterministic pagination and valid SQL generation, ordering operati
 | **Math Functions** | `Math.Abs(x)`, `Math.Round(x)` | `ABS(x)`, `ROUND(x)` |
 | **String Props** | `x.Name.Length`, `x.Name.IndexOf(s)` | `LENGTH(name)`, `POSITION(s, name)` |
 
-> For the complete C#→SQL expression mapping, see [Expression Translation Reference](LINQ-to-Snowflake-Capabilities.md).
+> For the complete feature matrix and expression translation table, see [Capabilities & Limitations](LINQ-to-Snowflake-Capabilities.md).
 
 ### Grouping and Aggregation
 
@@ -179,9 +179,6 @@ var stats = orders
 ```
 
 > **Note:** `GroupBy` supports both single-key and composite-key grouping (e.g., `GroupBy(o => new { o.Category, o.Region })`).
-
-> [!TIP]
-> **Performance:** Apply `.Where()` filters *before* `.GroupBy()` to reduce the rows Snowflake must scan and group. Predicates in the `WHERE` clause enable micro-partition pruning before the aggregation stage. Note: predicate overloads like `Count(x => x.IsActive)` are pure syntactic sugar — they call `.Where(pred).Count()` internally, producing identical SQL and identical query plans.
 
 **Terminal Aggregates** — compute a single aggregate value directly, no `GroupBy` needed:
 
@@ -256,9 +253,6 @@ var result = orders.Join(
 ```
 
 > **Note:** Composite and computed keys can be combined — `new { o.Name.ToUpper(), o.Region }` works.
-
-> [!NOTE]
-> **Composite key arity is enforced at compile time by the C# type system.** Both key selectors must produce the same `TKey` type. If the anonymous type shapes don't match (different member names or counts), the C# compiler rejects the call.
 
 ### GroupJoin
 
@@ -460,16 +454,6 @@ var validator = new OrderValidator();
 
 > ⚠️ **Performance & billing**: Server-side functions in `Where()` prevent Snowflake predicate pushdown. Prefer native operators when possible. The build-time analyzer (`DFSN004`) warns automatically. If a method uses a construct with no Java equivalent (e.g., `foreach`, `new List<T>`, `is` pattern), the `DFSN008` error diagnostic fires at build time — the method cannot be deployed.
 
-**Build-Time Diagnostics:**
-
-| Rule | Severity | Description |
-|------|----------|---------|
-| **DFSN004** | ⚠️ Warning | Custom method in `Where()` — prevents predicate pushdown |
-| **DFSN005** | ⚠️ Warning | Instance method — supported, but carries closure overhead |
-| **DFSN006** | ⚠️ Warning | Multiple server-side functions in same `Where` — compounding performance impact |
-| **DFSN007** | ℹ️ Info | Method will execute server-side on Snowflake — not locally in your .NET process |
-| **DFSN008** | ❌ Error | Method uses a construct with no Snowflake equivalent — cannot be deployed |
-
 ### ForEach — Server-Side Iteration
 
 Deploy server-side logic to Snowflake as an anonymous stored procedure. Execution is deferred until a terminal action (`.Do()`, `.Count()`, `.ToList()`, `.ToArray()`):
@@ -488,15 +472,7 @@ Console.WriteLine($"Processed {_count} rows, total: {_total}");
 
 > **Lazy Contract:** `ForEach()` returns `SnowflakeQuery<T>` — it is a transformation, not an action. `.Do()` is the explicit action that forces execution. If you need the row count back, use `.Count()` instead.
 
-**Synchronization Rules:**
-
-| Rule | Description |
-|------|-------------|
-| **Call `.Do()`** | `ForEach` is lazy. No execution (or sync-back) occurs until you call a terminal (`.Do()`, `.Count()`, `.ToList()`). |
-| **Primitives Only** | Only `int`, `long`, `double`, `float`, `decimal`, `bool`, and `string` fields are synchronized. |
-| **Additive Merge Only** | Only `+=`, `++`, and `-=` patterns produce correct results. Conditional assignments like `if (x > max) max = x` will produce incorrect values because the Snowflake SP runs in isolation. Use server-side aggregations (`Max()`, `Min()`) for these operations. |
-| **Collections Fail** | `List<T>`, `Dictionary`, arrays, etc. are **NOT** synchronized back. Use numeric counters instead. |
-| **String Concatenation** | String `+=` works but appended order is **non-deterministic** for ForEachCase (each SP runs independently). |
+**Supported accumulator types:** `int`, `long`, `double`, `float`, `decimal`, `bool`, `string`.
 
 > [!NOTE]
 > **Performance characteristic:** Each `.ForEach()` invocation generates a `CREATE PROCEDURE` → `CALL` → `DROP PROCEDURE` cycle on Snowflake. The Snowflake JVM incurs ~5–7 seconds of compilation latency per procedure call. This is inherent to Snowflake's stored procedure infrastructure, not DataLinq overhead. ForEach is designed for **batch/ETL workloads** — do not use it in latency-sensitive request paths.
@@ -569,32 +545,6 @@ await context.Read.Table<Order>("ORDERS")
 - Each category generates a separate stored procedure targeting rows where `_category = i`.
 
 > For the full Cases philosophy, lazy execution contract, chaining rules, and API reference, see [Cases Pattern](Cases-Pattern.md).
-
-### Lazy/Terminal Reference
-
-Every `SnowflakeQuery<T>` method is either a **lazy transformation** (returns `SnowflakeQuery<T>`, schedules work on Snowflake) or a **terminal action** (executes SQL, returns a value or streams data).
-
-| Method | Kind | Description |
-|--------|------|--------------|
-| `Where`, `Select`, `OrderBy`, `Join`, `GroupBy`... | ☁️ Lazy | Build the SQL execution plan — no compute yet |
-| `ForEach(action)` | ☁️ Lazy | Registers stored procedure — deferred |
-| `ForEachCase(actions...)` | ☁️ Lazy | Per-category SP pipeline — deferred |
-| `Cases()`, `SelectCase()` | ☁️ Lazy | Categorization/projection — no compute yet |
-| `AllCases()` | ☁️ Lazy | Returns `SnowflakeQuery<R>` (projected type) — no data moved |
-| `UnCase()` | ☁️ Lazy | Returns `SnowflakeQuery<T>` (original type, category stripped) — no data moved |
-| `Do()` | ⚡ **Terminal** | Execute plan, discard result — the natural "fire" idiom |
-| `Count()` | ⚡ **Terminal** | Execute plan, return row count |
-| `ToList()` / `ToArray()` | ⚡ **Terminal** | Execute plan, materialize to memory |
-| `First()` / `FirstOrDefault()` | ⚡ **Terminal** | Execute plan, return single element |
-| `Single()` / `SingleOrDefault()` | ⚡ **Terminal** | Execute plan, verify exactly one result |
-| `Sum()` / `Average()` / `Min()` / `Max()` | ⚡ **Terminal** | Execute plan, return scalar aggregate |
-| `Any()` / `All()` | ⚡ **Terminal** | Execute plan, return boolean |
-| `Pull()` | ☁️ Lazy | Stream as `IAsyncEnumerable<T>` — execution deferred until enumerated |
-| `Show()` | ⚡ **Terminal** | Execute plan, print to console |
-| `WriteTable()` / `MergeTable()` | ⚡ **Terminal** | Execute plan, write to Snowflake table |
-| `WriteTables()` / `MergeTables()` | ⚡ **Terminal** | Cases terminal: write each category to a separate table |
-
-> **`.Do()` is the correct terminal when no return value is needed.** It is purpose-built for `ForEach(action).Do()` patterns. Using `.Count()` as a terminal when you don't need the count is misleading.
 
 ### The Server/Client Boundary — Pull()
 
@@ -843,6 +793,6 @@ int dropped = context
 
 ## See Also
 
-- [Expression Translation Reference](LINQ-to-Snowflake-Capabilities.md) — C#→SQL mapping, window functions, VARIANT translation, design philosophy
+- [LINQ-to-Snowflake Capabilities & Limitations](LINQ-to-Snowflake-Capabilities.md) — Detailed feature support matrix
 - [Cases Pattern](Cases-Pattern.md) — Cases/SelectCase philosophy, chaining rules, API reference
 - [LINQ-to-Spark](LINQ-to-Spark.md) — SparkQuery provider documentation
