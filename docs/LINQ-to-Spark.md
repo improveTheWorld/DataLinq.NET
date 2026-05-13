@@ -116,6 +116,28 @@ using var context = Spark.Connect(SparkMaster.Yarn(), "MyApp", o => {
 });
 ```
 
+**F5 Experience (v1.3.1+):**
+
+In local mode, `Spark.Connect()` **automatically launches the JVM debug backend** if no backend is listening on port 5567. This means you can press F5 in your IDE and everything just works — no manual `spark-submit` needed.
+
+```csharp
+// This auto-starts the JVM backend → runs your query → stops the JVM on Dispose():
+using var context = Spark.Connect(SparkMaster.Local(), "MyApp");
+var count = context.Read.Parquet<Order>("/data/orders").Count();
+```
+
+Requirements: `JAVA_HOME` and `SPARK_HOME` environment variables must be set. The Microsoft.Spark JAR is discovered automatically from the NuGet cache.
+
+To disable auto-launch (e.g., when using a manually started backend):
+
+```csharp
+using var context = Spark.Connect(SparkMaster.Local(), "MyApp", o => {
+    o.AutoStartBackend = false;  // Use existing JVM backend only
+});
+```
+
+> Auto-launch is **ignored for remote clusters** (Standalone, YARN, Kubernetes) — those manage their own JVM infrastructure.
+
 > [!CAUTION]
 > **One SparkContext per process.** The JVM shares a single `SparkContext`. Disposing any `Spark.Connect()` context kills the shared SparkContext for ALL instances in the same process. Do not create multiple contexts in the same application — reuse a single context throughout.
 
