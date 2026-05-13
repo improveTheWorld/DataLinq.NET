@@ -9,7 +9,7 @@ description: Context management rules for AI - auto-refresh on startup, auto-upd
 ## Startup Behavior
 
 **On every new conversation:**
-1. Check if `.agent/context/` folder exists
+1. Check if `.agents/context/` folder exists
 2. If YES → Execute `/refresh` (read indexed context silently)
 3. If NO → Execute `/scan` (generate the context index first)
 
@@ -26,10 +26,10 @@ description: Context management rules for AI - auto-refresh on startup, auto-upd
 ## Context Awareness
 
 **Always remember:**
-- You have an indexed context in `.agent/` that helps you find information
-- Check `.agent/index.md` first when exploring the codebase
+- You have an indexed context in `.agents/` that helps you find information
+- Check `.agents/index.md` first when exploring the codebase
 - Context files: `architecture.md`, `source.md`, `docs.md`, `tests.md`, `packaging.md`
-- **Read `.agent/workflows/quality-cycle.md`** before any bug fix, audit response, or release work
+- **Read `.agents/workflows/quality-cycle.md`** before any bug fix, audit response, or release work
 
 ## Silent Operations
 

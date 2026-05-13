@@ -1,4 +1,4 @@
-﻿# Source Code Map
+# Source Code Map
 
 ## Solution Location
 `src/DataLinq.NET.sln`
@@ -69,13 +69,14 @@
 > **Location:** `c:\CodeSource\DataLinq.Enterprise` (PRIVATE repo)
 > **Solution:** `DataLinq.Enterprise.sln`
 > **Structure:** `snowflake/`, `spark/`, `shared/`, `.archive/`
+> **Full context:** See [Enterprise .agents/index.md](file:///c:/CodeSource/DataLinq.Enterprise/.agents/index.md) for up-to-date details.
 
 ### Source Projects (`src/`)
 
 | Project | Location | Version |
 |---------|----------|---------|
-| `DataLinq.Framework.SnowflakeQuery` | `snowflake/src/` | v1.2.1 |
-| `DataLinq.Framework.SparkQuery` | `spark/src/` | v1.2.1 |
+| `DataLinq.Framework.SnowflakeQuery` | `snowflake/src/` | v1.4.0 |
+| `DataLinq.Framework.SparkQuery` | `spark/src/` | v1.3.0 |
 | `DataLinq.Extensions.SparkQueryExtensions` | `spark/src/` | - |
 | `DataLinq.Licensing` | `shared/src/` | - |
 | `DataLinq.Spark.Analyzers` | `spark/src/` | - |

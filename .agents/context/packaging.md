@@ -1,4 +1,4 @@
-﻿# Packaging & Release
+# Packaging & Release
 
 ## Version Management
 Version is defined in: `Directory.Build.props` (repo root)
@@ -12,8 +12,8 @@ Version is defined in: `Directory.Build.props` (repo root)
 | Package | Type | License | Current |
 |---------|------|---------|---------|
 | **DataLinq.NET** | Free (Fat package, all DLLs embedded) | Apache-2.0 | v1.0.0 |
-| **DataLinq.Snowflake** | Premium (Freemium) | Commercial | TBD (csproj, not yet published) |
-| **DataLinq.Spark** | Premium (Freemium) | Commercial | TBD (csproj) |
+| **DataLinq.Snowflake** | Premium (Freemium) | Commercial | v1.4.0 |
+| **DataLinq.Spark** | Premium (Freemium) | Commercial | v1.3.0 |
 
 > **Freemium model:** Both Snowflake and Spark have a free tier allowing up to **1,000 rows** per transaction.
 > Production use requires a license key (see `shared/docs/Licensing.md` in Enterprise repo).
