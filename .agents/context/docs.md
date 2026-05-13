@@ -1,4 +1,4 @@
-﻿# Documentation Map
+# Documentation Map
 
 ## Location
 All documentation is in `src/docs/`
@@ -81,5 +81,10 @@ Located in `tests/IntegrationTests/DataLinq.AuditTest/`:
 - `AUDIT_REPORT3.md` — v1.2.1 pre-fix audit (NET-008 snake_case, Sum ambiguity, doc issues)
 - `AUDIT_REPORT4.md` — v1.2.1 final audit (134 tests, 133 pass, NET-009 JsonLinesFormat found)
 
+## Enterprise Documentation
+> **Note:** The following documentation resides in the `DataLinq.Enterprise` sister repository.
 
-
+- **Enterprise Documentation Map**: `c:\CodeSource\DataLinq.Enterprise\.agents\context\docs.md`
+- **Spark 1.3.0 External Audit**: [audit-report-v1.3.0.md](file:///c:/CodeSource/DataLinq.Enterprise/spark/docs/audit-report-v1.3.0.md)
+- **Spark Docs**: `c:\CodeSource\DataLinq.Enterprise\spark\docs\`
+- **Snowflake Docs**: `c:\CodeSource\DataLinq.Enterprise\snowflake\docs\`
