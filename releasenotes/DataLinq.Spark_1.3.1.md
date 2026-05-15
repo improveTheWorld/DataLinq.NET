@@ -4,7 +4,7 @@
 
 ## Highlights
 
-DataLinq.Spark v1.3.1 delivers the **F5 Experience** — press Run in your IDE and everything just works. The JVM backend now launches automatically in local mode. This release also fixes a critical `Sum()` casting bug and adds a missing `ForEachCase` overload.
+DataLinq.Spark v1.3.1 delivers the **F5 Experience** — press Run in your IDE and everything just works. The JVM backend now launches automatically in local mode. This release also fixes a critical `Sum()` casting bug, resolves a latent reflection issue with `internal static` callbacks in `ForEach`, and adds a missing `ForEachCase` overload.
 
 ---
 
@@ -57,6 +57,20 @@ query.Cases(o => o.Amount > 1000)
 
 ## Bug Fixes
 
+### ForEach with `internal static` Methods
+
+`ForEach` was throwing `Method not found` for any callback declared as `internal static`. The UDF reflection pipeline used `BindingFlags.Public | BindingFlags.Static` to resolve methods on Spark Workers — but `internal` maps to `NonPublic` in .NET reflection, so these methods were invisible:
+
+```csharp
+// v1.3.0: ❌ "Method not found" on Worker
+// v1.3.1: ✅ Works correctly
+internal static void ProcessOrder(Order o) => TotalAmount += o.Amount;
+
+query.ForEach(ProcessOrder).Do();
+```
+
+The same fix was applied to static **field** lookups in the delta sync pipeline — `internal static` fields now synchronize correctly back to the driver.
+
 ### Sum() InvalidCastException (BUG-001)
 
 `Sum()` was throwing `InvalidCastException` on every call. The method was hardcoded to return `decimal?` and deserialize via `GetAs<decimal>`, but Spark's JVM always returns `double` for SUM aggregations:
@@ -73,9 +87,9 @@ Fix: return type changed to `double?`, matching `Average()` which was already co
 
 ## Quality
 
-- **808+ tests** — zero failures across unit, integration, adversarial audit, and package audit suites
+- **1,134 tests** — zero failures across unit (208), integration (328), package integration (328), adversarial audit (95), and audit batches (175)
 - All features verified across the full 15-stage release pipeline
-- 17 new integration tests covering terminal aggregates (`Sum`, `Average`, `Max`, `Min`) and ForEachCase 2-tuple flows
+- 15 new integration tests covering terminal aggregates (`Sum`, `Average`, `Max`, `Min`) and ForEachCase 2-tuple flows
 
 ---
 
